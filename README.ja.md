@@ -50,6 +50,10 @@
 
 ## Slack アプリの設定
 
+> 完全な手引き — スコープの正当性説明、管理者承認、トークンの取り扱い、
+> 動作検証チェックリスト、トラブルシューティング — は
+> [Slack アプリ構成ハンドブック](docs/ja/slack-app-setup.ja.md) を参照。
+
 以下のマニフェストからアプリを作成します(App settings → App Manifest):
 
 ```yaml
@@ -175,6 +179,8 @@ make package        # リリース zip; darwin は署名+notarize
 
 ## ドキュメント
 
+- [Slack アプリ構成ハンドブック](docs/ja/slack-app-setup.ja.md) /
+  [English](docs/en/slack-app-setup.md)
 - [RFP(承認済み設計)](docs/ja/ir-hub-rfp.ja.md) /
   [English](docs/en/ir-hub-rfp.md)
 

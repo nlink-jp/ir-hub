@@ -55,6 +55,10 @@ accumulation and reuse.
 
 ## Slack app setup
 
+> Full walkthrough — scopes with justifications, admin approval,
+> token handling, verification checklist, troubleshooting — in the
+> [Slack App Setup Handbook](docs/en/slack-app-setup.md).
+
 Create an app from this manifest (App settings → App Manifest):
 
 ```yaml
@@ -179,6 +183,8 @@ make package        # release zips; darwin builds signed + notarized
 
 ## Documentation
 
+- [Slack App Setup Handbook](docs/en/slack-app-setup.md) /
+  [日本語](docs/ja/slack-app-setup.ja.md)
 - [RFP (approved design)](docs/en/ir-hub-rfp.md) /
   [日本語](docs/ja/ir-hub-rfp.ja.md)
 
