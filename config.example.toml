@@ -1,0 +1,55 @@
+# ir-hub configuration template.
+#
+# Copy to ~/.config/ir-hub/config.toml and edit, or override any
+# field via IRHUB_* environment variables (see README for the
+# precedence order). Slack tokens are NEVER set in this file —
+# provide them via environment variables only:
+#
+#   IRHUB_SLACK_APP_TOKEN  app-level token (connections:write, "xapp-...")
+#   IRHUB_SLACK_BOT_TOKEN  bot token ("xoxb-...")
+
+[gcp]
+project  = "your-project-id"
+location = "us-central1"
+
+[model]
+# Per org ADR-001, stay on Gemini 2.5 until Gemini 3 GAs.
+name = "gemini-2.5-flash"
+
+[channel]
+# Default visibility for case channels created by /ir-hub new.
+# One of: private, public. Overridable per case with
+# --private / --public flags.
+default_visibility = "private"
+# Case channels are named <prefix><sequence>-<slug>. Slack requires
+# lowercase, <= 80 chars, unique workspace-wide incl. archived.
+name_prefix = "ir-"
+
+[acl]
+# Who may run /ir-hub commands and mention the bot.
+# Evaluation order: deny lists first, then allow lists.
+# With BOTH allow lists empty, everything is denied (fail-safe).
+# Users are Slack user IDs; groups are Slack User Group handles.
+allow_users  = []
+allow_groups = []
+deny_users   = []
+deny_groups  = []
+# User Group membership cache TTL (seconds).
+group_cache_ttl = 300
+# Reply to denied users? Default false: silent + audit log only
+# (noise control in large workspaces).
+notify_denied = false
+
+[storage]
+# Where finalized knowledge documents (JSON + Markdown pairs) are
+# exported. One of: local, gcs, s3.
+backend    = "local"
+local_path = "./knowledge"
+# gcs_bucket = "BUCKET_NAME"
+# s3_bucket  = "BUCKET_NAME"
+# s3_prefix  = "ir-hub/"
+
+[db]
+# Embedded SQLite database holding runtime state (case metadata,
+# ingested messages, analysis results, knowledge index).
+path = "~/.local/share/ir-hub/ir-hub.db"

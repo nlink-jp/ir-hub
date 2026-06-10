@@ -1,0 +1,29 @@
+# Build artifacts
+dist/
+
+# Go
+*.test
+*.out
+
+# Credentials
+.env
+
+# Local deployment overrides (contain environment-specific values)
+*.local.yaml
+*.local.toml
+*.local.json
+
+# Runtime state (embedded DB, exported knowledge)
+*.db
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude Code
+.claude/
