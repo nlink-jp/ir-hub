@@ -153,7 +153,7 @@ group/other に読めるパーミッションの場合、ir-hub は起動時に�
 
 ```toml
 [acl]
-allow_groups = ["ir-team"]      # Slack User Group のハンドル
+allow_groups = ["ir-team"]      # User Group のハンドルまたは ID ("S…")
 deny_users   = []               # deny が allow より優先
 notify_denied = false           # true: 拒否をエフェメラルで通知
 ```

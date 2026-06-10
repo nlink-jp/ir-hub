@@ -12,6 +12,7 @@ package acl
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -19,6 +20,13 @@ import (
 
 	"github.com/slack-go/slack"
 )
+
+// groupIDRe matches Slack User Group (subteam) IDs like
+// "S0BAEBU39G8". Group entries matching this are treated as IDs
+// directly; anything else is resolved as a handle. Handles are
+// lowercase by Slack's rules, so the uppercase pattern cannot
+// collide.
+var groupIDRe = regexp.MustCompile(`^S[A-Z0-9]{6,}$`)
 
 // GroupResolver is the Slack API subset the checker needs.
 // slackapi.API satisfies it.
@@ -83,33 +91,42 @@ func New(cfg Config, resolver GroupResolver, opts ...Option) *Checker {
 	return c
 }
 
-// ValidateGroups resolves every configured group handle and returns
-// an error naming the unknown ones. Run at startup so config typos
-// fail fast instead of silently denying (or never denying).
+// ValidateGroups resolves every configured group entry (handle or
+// S… ID) and returns an error naming the unknown ones. Run at
+// startup so config typos fail fast instead of silently denying
+// (or never denying).
 func (c *Checker) ValidateGroups(ctx context.Context) error {
-	handles := map[string]bool{}
+	entries := map[string]bool{}
 	for _, h := range c.cfg.AllowGroups {
-		handles[h] = true
+		entries[h] = true
 	}
 	for _, h := range c.cfg.DenyGroups {
-		handles[h] = true
+		entries[h] = true
 	}
-	if len(handles) == 0 {
+	if len(entries) == 0 {
 		return nil
 	}
 	mapping, err := c.handleMap(ctx)
 	if err != nil {
 		return fmt.Errorf("acl: resolve user groups: %w", err)
 	}
+	ids := make(map[string]bool, len(mapping))
+	for _, id := range mapping {
+		ids[id] = true
+	}
 	var unknown []string
-	for h := range handles {
-		if _, ok := mapping[h]; !ok {
-			unknown = append(unknown, h)
+	for e := range entries {
+		if groupIDRe.MatchString(e) {
+			if !ids[e] {
+				unknown = append(unknown, e)
+			}
+		} else if _, ok := mapping[e]; !ok {
+			unknown = append(unknown, e)
 		}
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		return fmt.Errorf("acl: unknown user group handle(s): %s (typo in allow_groups/deny_groups?)",
+		return fmt.Errorf("acl: unknown user group handle(s)/ID(s): %s (typo in allow_groups/deny_groups?)",
 			strings.Join(unknown, ", "))
 	}
 	return nil
@@ -156,14 +173,21 @@ func (c *Checker) Check(ctx context.Context, userID string) (Decision, error) {
 	return Decision{Allowed: false, Reason: "not in any allow list"}, nil
 }
 
-func (c *Checker) isMember(ctx context.Context, handle, userID string) (bool, error) {
-	mapping, err := c.handleMap(ctx)
-	if err != nil {
-		return false, err
-	}
-	groupID, ok := mapping[handle]
-	if !ok {
-		return false, fmt.Errorf("user group handle %q not found", handle)
+// isMember resolves a group entry — an S… ID is used directly, a
+// handle goes through the handle→ID mapping — and checks userID
+// against the cached member set.
+func (c *Checker) isMember(ctx context.Context, entry, userID string) (bool, error) {
+	groupID := entry
+	if !groupIDRe.MatchString(entry) {
+		mapping, err := c.handleMap(ctx)
+		if err != nil {
+			return false, err
+		}
+		id, ok := mapping[entry]
+		if !ok {
+			return false, fmt.Errorf("user group handle %q not found", entry)
+		}
+		groupID = id
 	}
 	set, err := c.memberSet(ctx, groupID)
 	if err != nil {

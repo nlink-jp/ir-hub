@@ -175,7 +175,7 @@ About ページに表示されるのは 1 言語のみなので、ワークス�
 | `chat:write` | キックオフ/クローズ/ステータス投稿 | Bot として案件チャネルへ投稿 |
 | `app_mentions:read` | `@ir-hub` | メンション受信(知見 Q&A は Phase 3、Phase 1 は案内を返信) |
 | `users:read` | ACL、レポート | 監査ログ・表示用のユーザー ID 解決 |
-| `usergroups:read` | ACL | User Group ハンドル(`allow_groups` / `deny_groups`)のメンバー展開 |
+| `usergroups:read` | ACL | User Group ハンドルまたは ID(`allow_groups` / `deny_groups`)のメンバー展開 |
 | `channels:manage` | `/ir-hub new --public` | **public** 案件チャネルの作成と起票者の招待 |
 | `channels:read` | 案件参照 | public チャネルのメタデータ取得 |
 | `channels:history` | 取り込み | 再接続 backfill のための public 案件チャネル履歴読取り |

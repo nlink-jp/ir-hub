@@ -19,10 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - `/ir-hub close` and `/ir-hub status` (metadata summary)
   - Bare `/ir-hub` opens a Block Kit modal: action picker → new-case
     form with validation
-  - ACL: whitelist + blacklist by user ID and Slack User Group with
-    TTL-cached membership; deny-by-default without a whitelist;
-    silent audit-logged denials (ephemeral notify opt-in); unknown
-    group handles fail startup
+  - ACL: whitelist + blacklist by user ID and Slack User Group
+    (handle or `S…` ID) with TTL-cached membership; deny-by-default
+    without a whitelist; silent audit-logged denials (ephemeral
+    notify opt-in); unknown group handles/IDs fail startup
   - Continuous message ingestion from open case channels into
     embedded SQLite (pure-Go driver), plus history backfill after
     reconnects with rate-limit handling

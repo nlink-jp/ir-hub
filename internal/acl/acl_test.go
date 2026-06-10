@@ -174,6 +174,59 @@ func TestValidateGroups(t *testing.T) {
 	}
 }
 
+func TestAllowGroupByID(t *testing.T) {
+	// Group entries may be raw subteam IDs (S…) instead of handles.
+	f := newFake()
+	c := New(Config{AllowGroups: []string{"S-IR"}, CacheTTL: time.Minute}, f)
+	// "S-IR" contains '-', not matched by the ID pattern — use a
+	// realistic ID in the fake instead.
+	f.groups = append(f.groups, slack.UserGroup{ID: "S0BAEBU39G8", Handle: "secops"})
+	f.members["S0BAEBU39G8"] = []string{"U-CAROL"}
+
+	c = New(Config{AllowGroups: []string{"S0BAEBU39G8"}, CacheTTL: time.Minute}, f)
+	d, err := ck(t, c, "U-CAROL")
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if !d.Allowed {
+		t.Errorf("U-CAROL should be allowed via group ID: %+v", d)
+	}
+	d, _ = ck(t, c, "U-EVE")
+	if d.Allowed {
+		t.Errorf("U-EVE should be denied: %+v", d)
+	}
+}
+
+func TestDenyGroupByID(t *testing.T) {
+	f := newFake()
+	f.groups = append(f.groups, slack.UserGroup{ID: "S0BADGUYS99", Handle: "contractors2"})
+	f.members["S0BADGUYS99"] = []string{"U-EVE"}
+	c := New(Config{
+		AllowUsers: []string{"U-EVE"},
+		DenyGroups: []string{"S0BADGUYS99"},
+		CacheTTL:   time.Minute,
+	}, f)
+	d, _ := ck(t, c, "U-EVE")
+	if d.Allowed {
+		t.Errorf("deny group by ID must beat allow_users: %+v", d)
+	}
+}
+
+func TestValidateGroupsByID(t *testing.T) {
+	f := newFake()
+	f.groups = append(f.groups, slack.UserGroup{ID: "S0BAEBU39G8", Handle: "secops"})
+	c := New(Config{AllowGroups: []string{"S0BAEBU39G8"}, CacheTTL: time.Minute}, f)
+	if err := c.ValidateGroups(context.Background()); err != nil {
+		t.Errorf("ValidateGroups with known ID: %v", err)
+	}
+
+	c = New(Config{AllowGroups: []string{"S0NOSUCHID9"}, CacheTTL: time.Minute}, f)
+	err := c.ValidateGroups(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "S0NOSUCHID9") {
+		t.Errorf("ValidateGroups with unknown ID: err = %v", err)
+	}
+}
+
 func TestValidateGroupsNoGroupsConfigured(t *testing.T) {
 	f := newFake()
 	c := New(Config{AllowUsers: []string{"U-ALICE"}, CacheTTL: time.Minute}, f)

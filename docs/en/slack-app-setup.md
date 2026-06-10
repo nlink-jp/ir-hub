@@ -180,7 +180,7 @@ team asks "why does this app need X", this is the answer key.
 | `chat:write` | kickoff/close/status posts | Post messages as the bot into case channels |
 | `app_mentions:read` | `@ir-hub` | Receive mentions (knowledge Q&A from Phase 3; polite notice in Phase 1) |
 | `users:read` | ACL, reports | Resolve user IDs for audit logs and display |
-| `usergroups:read` | ACL | Expand User Group handles (`allow_groups` / `deny_groups`) into member lists |
+| `usergroups:read` | ACL | Expand User Group handles or IDs (`allow_groups` / `deny_groups`) into member lists |
 | `channels:manage` | `/ir-hub new --public` | Create **public** case channels and invite the opener |
 | `channels:read` | case lookups | Read public-channel metadata |
 | `channels:history` | ingestion | Read public case-channel history for reconnect backfill |

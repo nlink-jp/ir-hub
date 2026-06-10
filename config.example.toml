@@ -35,7 +35,8 @@ name_prefix = "ir-"
 # Who may run /ir-hub commands and mention the bot.
 # Evaluation order: deny lists first, then allow lists.
 # With BOTH allow lists empty, everything is denied (fail-safe).
-# Users are Slack user IDs; groups are Slack User Group handles.
+# Users are Slack user IDs (U…); groups are Slack User Group
+# handles (e.g. "ir-team") or User Group IDs (e.g. "S0BAEBU39G8").
 allow_users  = []
 allow_groups = []
 deny_users   = []

@@ -158,7 +158,7 @@ Populate the allow lists before starting:
 
 ```toml
 [acl]
-allow_groups = ["ir-team"]      # Slack User Group handles
+allow_groups = ["ir-team"]      # User Group handles or IDs ("S…")
 deny_users   = []               # deny wins over allow
 notify_denied = false           # true: tell denied users ephemerally
 ```
