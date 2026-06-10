@@ -312,7 +312,10 @@ func (b *Bot) handleInteractive(ctx context.Context, req socketmode.Request, cb 
 			b.socket.Ack(req, slack.NewErrorsViewSubmissionResponse(fieldErrs))
 			return
 		}
-		b.socket.Ack(req)
+		// This view was pushed on top of the action picker: an empty
+		// ack would only pop back to the picker. Clear the whole
+		// modal stack instead.
+		b.socket.Ack(req, slack.NewClearViewSubmissionResponse())
 		b.dispatch(false, func() { b.runNew(ctx, args, meta.UserID, "") })
 
 	default:

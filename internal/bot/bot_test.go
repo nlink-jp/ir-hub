@@ -360,6 +360,17 @@ func TestNewCaseSubmissionCreatesCase(t *testing.T) {
 	if c.Title != "Phishing wave" || c.Visibility != "public" {
 		t.Errorf("case = %+v", c)
 	}
+
+	// The form was pushed on top of the action picker: the ack must
+	// clear the whole stack, not pop back to the picker.
+	acks := h.socket.ackList()
+	if len(acks) != 1 || len(acks[0].payloads) != 1 {
+		t.Fatalf("acks = %+v, want one ack with clear payload", acks)
+	}
+	resp, ok := acks[0].payloads[0].(*slack.ViewSubmissionResponse)
+	if !ok || resp.ResponseAction != slack.RAClear {
+		t.Errorf("payload = %+v, want clear response", acks[0].payloads[0])
+	}
 }
 
 func TestSubmissionDeniedClosesSilently(t *testing.T) {
