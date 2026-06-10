@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Phase 1: bot foundation + case lifecycle management (no LLM).**
+  - `ir-hub serve`: resident Slack bot over Socket Mode with
+    automatic reconnect, redelivered-envelope dedup, immediate acks
+    (3-second rule), and graceful shutdown draining in-flight work
+  - `/ir-hub new <title> [--severity] [--private|--public]`: creates
+    the case channel (sequence-numbered name), invites the opener,
+    posts a kickoff message
+  - `/ir-hub close` and `/ir-hub status` (metadata summary)
+  - Bare `/ir-hub` opens a Block Kit modal: action picker → new-case
+    form with validation
+  - ACL: whitelist + blacklist by user ID and Slack User Group with
+    TTL-cached membership; deny-by-default without a whitelist;
+    silent audit-logged denials (ephemeral notify opt-in); unknown
+    group handles fail startup
+  - Continuous message ingestion from open case channels into
+    embedded SQLite (pure-Go driver), plus history backfill after
+    reconnects with rate-limit handling
+  - Strict TOML config (`unknown keys are errors`) with `IRHUB_*`
+    env overrides; Slack tokens are environment-only
 - Project scaffold: cobra CLI skeleton with `--version`, Makefile
   (`build` / `build-all` / `package` / `test` / `clean` → `dist/`),
   Developer ID codesign + notarize scripts, configuration template

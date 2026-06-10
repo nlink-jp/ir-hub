@@ -46,15 +46,16 @@ Settings load order: built-in defaults → TOML file → env vars → CLI flags.
 Schema: see `config.example.toml` — sections `[gcp]`, `[model]`,
 `[channel]`, `[acl]`, `[storage]`, `[db]`.
 
-## Key dependencies (planned)
+## Key dependencies
 
-- `github.com/slack-go/slack` — Socket Mode + Web API
-- `google.golang.org/genai` — Vertex AI Gemini SDK (NOT the
-  deprecated vertexai/genai)
-- `github.com/nlink-jp/nlk` — `guard` / `backoff` / `jsonfix`
-  (verify API signatures against the real files before use)
+- `github.com/slack-go/slack` (+ `socketmode`) — Socket Mode + Web API
+- `modernc.org/sqlite` — pure-Go SQLite (keeps CGO_ENABLED=0
+  cross-compiles working; do NOT switch to mattn/go-sqlite3)
 - `github.com/spf13/cobra`, `github.com/BurntSushi/toml`
-- SQLite driver (pure-Go preferred to keep CGO_ENABLED=0 cross-compile)
+- Planned for Phase 2+: `google.golang.org/genai` (NOT the
+  deprecated vertexai/genai), `github.com/nlink-jp/nlk`
+  (`guard` / `backoff` / `jsonfix` — verify API signatures against
+  the real files before use)
 
 ## Design constraints (from the RFP — canonical scope source)
 

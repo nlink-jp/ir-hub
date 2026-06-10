@@ -31,8 +31,21 @@ from `git describe --tags`).
 ```
 ir-hub/
 ├── main.go                 # cobra entry, version injection
-├── cmd/root.go             # CLI surface (subcommands arrive in Phase 1)
-├── internal/               # private packages (created during Phase 1)
+├── cmd/
+│   ├── root.go             # root command, --config persistent flag
+│   └── serve.go            # `ir-hub serve` — wiring only, no logic
+├── internal/
+│   ├── config/             # strict TOML + IRHUB_* env (unknown keys error)
+│   ├── store/              # SQLite (modernc.org/sqlite): cases/messages/acl_denials/meta
+│   ├── command/            # slash-command text parser (dependency-free)
+│   ├── channelname/        # <prefix><%04d seq>[-<slug>] generator
+│   ├── slackapi/           # Web API interface boundary + slack-go adapter
+│   │   └── slackapitest/   # configurable fake for dependent tests
+│   ├── acl/                # deny→allow evaluation, User Group TTL cache
+│   ├── cases/              # lifecycle use-cases: New/Close/Status
+│   ├── modal/              # Block Kit modals build + submission parse
+│   ├── ingest/             # message events + reconnect backfill
+│   └── bot/                # socketmode loop, ack/dedup/dispatch/shutdown
 ├── scripts/                # codesign / notarize (org templates, verbatim)
 ├── config.example.toml     # copy to ~/.config/ir-hub/config.toml
 ├── docs/
@@ -40,11 +53,14 @@ ir-hub/
 └── Makefile
 ```
 
-Planned internal packages (Phase 1+): `internal/config`,
-`internal/slackbot` (Socket Mode loop, dedup, async ACK),
-`internal/acl`, `internal/store` (SQLite), `internal/lifecycle`,
-`internal/analysis` (postmortem), `internal/knowledge`
-(index + export backends).
+Dependency direction: `bot → {acl, cases, modal, ingest, command}`;
+`cases/ingest/acl → slackapi (interface) + store`. No package-level
+singletons — everything is constructor-injected, clocks via
+`func() time.Time`, waiting via a small Sleeper interface.
+
+Planned packages for later phases: `internal/analysis` (Phase 2
+postmortem), `internal/knowledge` (Phase 2/3 index + export
+backends).
 
 ## Configuration model
 
@@ -80,8 +96,17 @@ After Phase 3 completes:
 ## Gotchas
 
 - **3-second rule**: Slack slash-command ACK and `trigger_id`
-  consumption must happen within 3 s. Never call the LLM before
-  ACKing.
+  consumption must happen within 3 s. The bot acks in handleEvent
+  before dispatching; `views.open` and view pushes bypass the
+  concurrency semaphore (`dispatch(true, …)`). Never put slow work
+  before an ack.
+- **View pushes over Socket Mode**: pass
+  `slack.NewPushViewSubmissionResponse` / `NewErrorsViewSubmissionResponse`
+  as the payload of `socketmode.Client.Ack()` — this is the
+  documented pattern, do not call views.update instead.
+- **Slash replies use response_url** (`slackapi.PostResponse`), not
+  PostEphemeral — the bot is usually not a member of the channel
+  where /ir-hub was typed.
 - **Socket Mode redelivery**: envelopes are redelivered after
   reconnects; handlers must be idempotent / deduped.
 - **Slash command visibility cannot be restricted by Slack** — the
