@@ -363,6 +363,13 @@ type Denial struct {
 	Reason     string
 }
 
+// CountDenials returns the number of audit-log entries.
+func (s *Store) CountDenials() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM acl_denials`).Scan(&n)
+	return n, err
+}
+
 // InsertDenial appends an entry to the ACL audit log.
 func (s *Store) InsertDenial(d Denial) error {
 	_, err := s.db.Exec(
