@@ -28,6 +28,8 @@ const (
 	DefaultGroupCacheTTL   = 300
 	DefaultStorageBackend  = "local"
 	DefaultStorageLocal    = "./knowledge"
+	DefaultRequestTimeout  = 180
+	DefaultMaxInputTokens  = 200000
 	defaultDBPathUnderHome = ".local/share/ir-hub/ir-hub.db"
 )
 
@@ -39,13 +41,14 @@ type Config struct {
 	// see (modals, posts, errors): "en" or "ja". Logs stay English.
 	Language string `toml:"language"`
 
-	GCP     GCPConfig     `toml:"gcp"`
-	Model   ModelConfig   `toml:"model"`
-	Channel ChannelConfig `toml:"channel"`
-	ACL     ACLConfig     `toml:"acl"`
-	Storage StorageConfig `toml:"storage"`
-	DB      DBConfig      `toml:"db"`
-	Slack   SlackConfig   `toml:"slack"`
+	GCP      GCPConfig      `toml:"gcp"`
+	Model    ModelConfig    `toml:"model"`
+	Channel  ChannelConfig  `toml:"channel"`
+	ACL      ACLConfig      `toml:"acl"`
+	Analysis AnalysisConfig `toml:"analysis"`
+	Storage  StorageConfig  `toml:"storage"`
+	DB       DBConfig       `toml:"db"`
+	Slack    SlackConfig    `toml:"slack"`
 
 	// Warnings collects non-fatal findings from Load (e.g. insecure
 	// config-file permissions). The caller decides where to print.
@@ -73,6 +76,15 @@ type ACLConfig struct {
 	DenyGroups    []string `toml:"deny_groups"`
 	GroupCacheTTL int      `toml:"group_cache_ttl"`
 	NotifyDenied  bool     `toml:"notify_denied"`
+}
+
+// AnalysisConfig tunes the LLM analysis pipeline.
+type AnalysisConfig struct {
+	// RequestTimeout caps each LLM call, in seconds.
+	RequestTimeout int `toml:"request_timeout"`
+	// MaxInputTokens bounds the conversation tokens loaded into one
+	// analysis prompt; older messages are truncated beyond it.
+	MaxInputTokens int `toml:"max_input_tokens"`
 }
 
 type StorageConfig struct {
@@ -108,12 +120,13 @@ func defaults() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
 		Language: "en",
-		GCP:     GCPConfig{Location: DefaultLocation},
-		Model:   ModelConfig{Name: DefaultModel},
-		Channel: ChannelConfig{DefaultVisibility: DefaultVisibility, NamePrefix: DefaultNamePrefix},
-		ACL:     ACLConfig{GroupCacheTTL: DefaultGroupCacheTTL},
-		Storage: StorageConfig{Backend: DefaultStorageBackend, LocalPath: DefaultStorageLocal},
-		DB:      DBConfig{Path: filepath.Join(home, filepath.FromSlash(defaultDBPathUnderHome))},
+		GCP:      GCPConfig{Location: DefaultLocation},
+		Model:    ModelConfig{Name: DefaultModel},
+		Channel:  ChannelConfig{DefaultVisibility: DefaultVisibility, NamePrefix: DefaultNamePrefix},
+		ACL:      ACLConfig{GroupCacheTTL: DefaultGroupCacheTTL},
+		Analysis: AnalysisConfig{RequestTimeout: DefaultRequestTimeout, MaxInputTokens: DefaultMaxInputTokens},
+		Storage:  StorageConfig{Backend: DefaultStorageBackend, LocalPath: DefaultStorageLocal},
+		DB:       DBConfig{Path: filepath.Join(home, filepath.FromSlash(defaultDBPathUnderHome))},
 	}
 }
 
@@ -184,6 +197,8 @@ func applyEnvOverrides(cfg *Config) {
 	setList(&cfg.ACL.DenyGroups, "IRHUB_ACL_DENY_GROUPS")
 	parseIntEnv(&cfg.ACL.GroupCacheTTL, "IRHUB_ACL_GROUP_CACHE_TTL")
 	parseBoolEnv(&cfg.ACL.NotifyDenied, "IRHUB_ACL_NOTIFY_DENIED")
+	parseIntEnv(&cfg.Analysis.RequestTimeout, "IRHUB_ANALYSIS_REQUEST_TIMEOUT")
+	parseIntEnv(&cfg.Analysis.MaxInputTokens, "IRHUB_ANALYSIS_MAX_INPUT_TOKENS")
 	setStr(&cfg.Storage.Backend, "IRHUB_STORAGE_BACKEND")
 	setStr(&cfg.Storage.LocalPath, "IRHUB_STORAGE_LOCAL_PATH")
 	setStr(&cfg.DB.Path, "IRHUB_DB_PATH")
@@ -260,6 +275,12 @@ func (c *Config) validate() error {
 	if c.ACL.GroupCacheTTL <= 0 {
 		return fmt.Errorf("acl.group_cache_ttl must be positive, got %d", c.ACL.GroupCacheTTL)
 	}
+	if c.Analysis.RequestTimeout <= 0 {
+		return fmt.Errorf("analysis.request_timeout must be positive, got %d", c.Analysis.RequestTimeout)
+	}
+	if c.Analysis.MaxInputTokens <= 0 {
+		return fmt.Errorf("analysis.max_input_tokens must be positive, got %d", c.Analysis.MaxInputTokens)
+	}
 	if c.DB.Path == "" {
 		return fmt.Errorf("db.path must not be empty")
 	}
@@ -267,7 +288,8 @@ func (c *Config) validate() error {
 }
 
 // ValidateServe checks the requirements that only the resident bot
-// needs: both Slack tokens present and well-formed.
+// needs: both Slack tokens present and well-formed, and a GCP
+// project for the Vertex AI analysis features (Phase 2+).
 func (c *Config) ValidateServe() error {
 	if c.Slack.AppToken == "" {
 		return fmt.Errorf("IRHUB_SLACK_APP_TOKEN is required (app-level token for Socket Mode)")
@@ -280,6 +302,9 @@ func (c *Config) ValidateServe() error {
 	}
 	if !strings.HasPrefix(c.Slack.BotToken, "xoxb-") {
 		return fmt.Errorf("IRHUB_SLACK_BOT_TOKEN must start with \"xoxb-\"")
+	}
+	if c.GCP.Project == "" {
+		return fmt.Errorf("gcp.project is required for LLM analysis (set [gcp] project in config.toml or IRHUB_GCP_PROJECT)")
 	}
 	return nil
 }

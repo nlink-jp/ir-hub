@@ -19,6 +19,8 @@
 language = "en"
 
 [gcp]
+# Required for `serve`: the postmortem / status analysis runs on
+# Vertex AI Gemini with Application Default Credentials.
 project  = "your-project-id"
 location = "us-central1"
 
@@ -51,6 +53,14 @@ group_cache_ttl = 300
 # Reply to denied users? Default false: silent + audit log only
 # (noise control in large workspaces).
 notify_denied = false
+
+[analysis]
+# Per-LLM-call timeout in seconds (postmortem stages, status summary).
+request_timeout = 180
+# Conversation token budget per analysis prompt; when a case exceeds
+# it, the newest messages within budget are analyzed and the
+# truncation is noted in the report.
+max_input_tokens = 200000
 
 [storage]
 # Where finalized knowledge documents (JSON + Markdown pairs) are

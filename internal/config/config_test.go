@@ -114,6 +114,9 @@ default_visibilty = "public"
 func TestLoadSlackTokensFromTOML(t *testing.T) {
 	clearEnv(t)
 	path := writeConfig(t, `
+[gcp]
+project = "example-project"
+
 [slack]
 app_token = "xapp-1-EXAMPLE"
 bot_token = "xoxb-EXAMPLE"
@@ -288,8 +291,61 @@ func TestValidateServe(t *testing.T) {
 	}
 
 	cfg.Slack.BotToken = "xoxb-EXAMPLE"
+	if err := cfg.ValidateServe(); err == nil || !strings.Contains(err.Error(), "gcp.project") {
+		t.Errorf("ValidateServe without project: err = %v, want gcp.project error", err)
+	}
+
+	cfg.GCP.Project = "example-project"
 	if err := cfg.ValidateServe(); err != nil {
-		t.Errorf("ValidateServe with both tokens: err = %v, want nil", err)
+		t.Errorf("ValidateServe fully configured: err = %v, want nil", err)
+	}
+}
+
+func TestAnalysisDefaultsAndEnv(t *testing.T) {
+	clearEnv(t)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Analysis.RequestTimeout != DefaultRequestTimeout {
+		t.Errorf("RequestTimeout = %d, want %d", cfg.Analysis.RequestTimeout, DefaultRequestTimeout)
+	}
+	if cfg.Analysis.MaxInputTokens != DefaultMaxInputTokens {
+		t.Errorf("MaxInputTokens = %d, want %d", cfg.Analysis.MaxInputTokens, DefaultMaxInputTokens)
+	}
+
+	t.Setenv("IRHUB_ANALYSIS_REQUEST_TIMEOUT", "300")
+	t.Setenv("IRHUB_ANALYSIS_MAX_INPUT_TOKENS", "50000")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatalf("Load with env: %v", err)
+	}
+	if cfg.Analysis.RequestTimeout != 300 || cfg.Analysis.MaxInputTokens != 50000 {
+		t.Errorf("Analysis = %+v, want env overrides", cfg.Analysis)
+	}
+}
+
+func TestAnalysisValidation(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("IRHUB_ANALYSIS_REQUEST_TIMEOUT", "-1")
+	if _, err := Load(""); err == nil || !strings.Contains(err.Error(), "request_timeout") {
+		t.Errorf("Load with negative timeout: err = %v", err)
+	}
+}
+
+func TestAnalysisFromTOML(t *testing.T) {
+	clearEnv(t)
+	path := writeConfig(t, `
+[analysis]
+request_timeout = 240
+max_input_tokens = 100000
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Analysis.RequestTimeout != 240 || cfg.Analysis.MaxInputTokens != 100000 {
+		t.Errorf("Analysis = %+v", cfg.Analysis)
 	}
 }
 
