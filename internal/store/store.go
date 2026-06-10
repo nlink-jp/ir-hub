@@ -14,12 +14,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
-
-const schemaVersion = "1"
 
 // Case states.
 const (
@@ -40,6 +39,10 @@ var ErrNotFound = errors.New("not found")
 
 // ErrNotOpen is returned when a state transition requires an open case.
 var ErrNotOpen = errors.New("case is not open")
+
+// ErrPMRunning is returned by BeginPMRun while another postmortem
+// run for the same case is still in the running state.
+var ErrPMRunning = errors.New("a postmortem run is already in progress for this case")
 
 type Store struct {
 	db  *sql.DB
@@ -81,15 +84,18 @@ func Open(path string, opts ...Option) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) migrate() error {
-	stmts := []string{
-		`PRAGMA journal_mode=WAL`,
-		`PRAGMA foreign_keys=ON`,
-		`PRAGMA busy_timeout=5000`,
-		`CREATE TABLE IF NOT EXISTS meta (
-			key   TEXT PRIMARY KEY,
-			value TEXT NOT NULL
-		)`,
+// migrations apply in order inside one transaction each;
+// meta.schema_version records the last applied version. Version 1
+// keeps IF NOT EXISTS so databases created before the versioning
+// mechanism (which already have the v1 tables and version '1')
+// take the same path as fresh ones.
+type migration struct {
+	version int
+	stmts   []string
+}
+
+var migrations = []migration{
+	{version: 1, stmts: []string{
 		`CREATE TABLE IF NOT EXISTS cases (
 			id           INTEGER PRIMARY KEY AUTOINCREMENT,
 			title        TEXT NOT NULL,
@@ -129,17 +135,90 @@ func (s *Store) migrate() error {
 			action     TEXT,
 			reason     TEXT NOT NULL
 		)`,
-	}
-	for _, stmt := range stmts {
-		if _, err := s.db.Exec(stmt); err != nil {
+	}},
+	{version: 2, stmts: []string{
+		`CREATE TABLE pm_runs (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			case_id     INTEGER NOT NULL REFERENCES cases(id),
+			status      TEXT NOT NULL CHECK (status IN ('running','done','failed')),
+			report_json TEXT,
+			report_md   TEXT,
+			error       TEXT,
+			started_at  TEXT NOT NULL,
+			finished_at TEXT
+		)`,
+		`CREATE INDEX idx_pm_runs_case ON pm_runs(case_id, id)`,
+		`CREATE TABLE knowledge (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			case_id    INTEGER NOT NULL REFERENCES cases(id),
+			tactic_id  TEXT NOT NULL UNIQUE,
+			title      TEXT NOT NULL,
+			category   TEXT NOT NULL,
+			confidence TEXT NOT NULL CHECK (confidence IN ('confirmed','inferred','suggested')),
+			tags       TEXT NOT NULL DEFAULT '[]',
+			summary    TEXT NOT NULL,
+			doc_json   TEXT NOT NULL,
+			doc_md     TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX idx_knowledge_case ON knowledge(case_id)`,
+	}},
+}
+
+func (s *Store) migrate() error {
+	// PRAGMAs apply outside transactions (journal_mode cannot
+	// change inside one).
+	for _, p := range []string{
+		`PRAGMA journal_mode=WAL`,
+		`PRAGMA foreign_keys=ON`,
+		`PRAGMA busy_timeout=5000`,
+	} {
+		if _, err := s.db.Exec(p); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
-	_, err := s.db.Exec(
-		`INSERT INTO meta (key, value) VALUES ('schema_version', ?)
-		 ON CONFLICT(key) DO NOTHING`, schemaVersion)
-	if err != nil {
-		return fmt.Errorf("migrate: set schema_version: %w", err)
+	if _, err := s.db.Exec(
+		`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		return fmt.Errorf("migrate: meta: %w", err)
+	}
+
+	current := 0
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return fmt.Errorf("migrate: read schema_version: %w", err)
+	default:
+		if current, err = strconv.Atoi(v); err != nil {
+			return fmt.Errorf("migrate: bad schema_version %q: %w", v, err)
+		}
+	}
+
+	for _, m := range migrations {
+		if m.version <= current {
+			continue
+		}
+		tx, err := s.db.Begin()
+		if err != nil {
+			return fmt.Errorf("migrate v%d: begin: %w", m.version, err)
+		}
+		for _, stmt := range m.stmts {
+			if _, err := tx.Exec(stmt); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("migrate v%d: %w", m.version, err)
+			}
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO meta (key, value) VALUES ('schema_version', ?)
+			 ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+			strconv.Itoa(m.version)); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migrate v%d: set version: %w", m.version, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("migrate v%d: commit: %w", m.version, err)
+		}
 	}
 	return nil
 }
@@ -351,6 +430,191 @@ func (s *Store) CountMessages(caseID int64) (int64, error) {
 	err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM messages WHERE case_id=?`, caseID).Scan(&n)
 	return n, err
+}
+
+// ListMessages returns all stored messages of a case in
+// chronological (ts) order.
+func (s *Store) ListMessages(caseID int64) ([]Message, error) {
+	rows, err := s.db.Query(
+		`SELECT channel_id, ts, case_id, COALESCE(thread_ts,''), COALESCE(user_id,''),
+		        COALESCE(bot_id,''), COALESCE(subtype,''), text, raw, source
+		 FROM messages WHERE case_id=? ORDER BY ts`, caseID)
+	if err != nil {
+		return nil, fmt.Errorf("list messages case %d: %w", caseID, err)
+	}
+	defer rows.Close()
+	var out []Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.ChannelID, &m.TS, &m.CaseID, &m.ThreadTS, &m.UserID,
+			&m.BotID, &m.Subtype, &m.Text, &m.Raw, &m.Source); err != nil {
+			return nil, fmt.Errorf("scan message: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// ---- postmortem runs & knowledge ----
+
+// PMRun is a postmortem execution record.
+type PMRun struct {
+	ID         int64
+	CaseID     int64
+	Status     string // running | done | failed
+	ReportJSON string
+	ReportMD   string
+	Error      string
+}
+
+// KnowledgeRow is one knowledge document to persist. TacticID is
+// assigned by FinalizePMRun; leave it empty on input.
+type KnowledgeRow struct {
+	TacticID   string
+	Title      string
+	Category   string
+	Confidence string
+	TagsJSON   string
+	Summary    string
+	DocJSON    string
+	DocMD      string
+}
+
+// BeginPMRun inserts a running pm_runs row, refusing while another
+// run for the case is still running.
+func (s *Store) BeginPMRun(caseID int64) (int64, error) {
+	var n int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM pm_runs WHERE case_id=? AND status='running'`, caseID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("begin pm run: %w", err)
+	}
+	if n > 0 {
+		return 0, ErrPMRunning
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO pm_runs (case_id, status, started_at) VALUES (?, 'running', ?)`,
+		caseID, s.nowRFC3339())
+	if err != nil {
+		return 0, fmt.Errorf("begin pm run: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+// FailPMRun marks a run failed with an error message.
+func (s *Store) FailPMRun(runID int64, errMsg string) error {
+	_, err := s.db.Exec(
+		`UPDATE pm_runs SET status='failed', error=?, finished_at=? WHERE id=?`,
+		errMsg, s.nowRFC3339(), runID)
+	if err != nil {
+		return fmt.Errorf("fail pm run %d: %w", runID, err)
+	}
+	return nil
+}
+
+// FailStaleRuns marks runs left running by a previous process as
+// failed. Call at startup.
+func (s *Store) FailStaleRuns() (int64, error) {
+	res, err := s.db.Exec(
+		`UPDATE pm_runs SET status='failed', error='interrupted by restart', finished_at=?
+		 WHERE status='running'`, s.nowRFC3339())
+	if err != nil {
+		return 0, fmt.Errorf("fail stale runs: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// LatestPMRun returns the most recent run for a case, or ErrNotFound.
+func (s *Store) LatestPMRun(caseID int64) (*PMRun, error) {
+	var r PMRun
+	err := s.db.QueryRow(
+		`SELECT id, case_id, status, COALESCE(report_json,''), COALESCE(report_md,''), COALESCE(error,'')
+		 FROM pm_runs WHERE case_id=? ORDER BY id DESC LIMIT 1`, caseID).
+		Scan(&r.ID, &r.CaseID, &r.Status, &r.ReportJSON, &r.ReportMD, &r.Error)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("latest pm run case %d: %w", caseID, err)
+	}
+	return &r, nil
+}
+
+// FinalizePMRun atomically marks the run done, replaces the case's
+// knowledge documents, and assigns tactic IDs (tac-YYYYMMDD-NNN,
+// NNN continuing from the day's maximum across all cases). The
+// build callback renders the final document contents once the ID is
+// known. Keep all LLM work outside this call — it holds the single
+// connection's write transaction.
+func (s *Store) FinalizePMRun(runID, caseID int64, reportJSON, reportMD string,
+	n int, build func(i int, tacticID string) KnowledgeRow) error {
+
+	now := s.now().UTC()
+	day := now.Format("20060102")
+	prefix := "tac-" + day + "-"
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("finalize pm run: begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(
+		`UPDATE pm_runs SET status='done', report_json=?, report_md=?, finished_at=? WHERE id=?`,
+		reportJSON, reportMD, now.Format(time.RFC3339), runID); err != nil {
+		return fmt.Errorf("finalize pm run %d: %w", runID, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM knowledge WHERE case_id=?`, caseID); err != nil {
+		return fmt.Errorf("finalize pm run: clear knowledge: %w", err)
+	}
+
+	seq := 0
+	var maxID sql.NullString
+	if err := tx.QueryRow(
+		`SELECT MAX(tactic_id) FROM knowledge WHERE tactic_id LIKE ?`, prefix+"%").Scan(&maxID); err != nil {
+		return fmt.Errorf("finalize pm run: max tactic id: %w", err)
+	}
+	if maxID.Valid {
+		if v, err := strconv.Atoi(maxID.String[len(prefix):]); err == nil {
+			seq = v
+		}
+	}
+
+	createdAt := now.Format(time.RFC3339)
+	for i := 0; i < n; i++ {
+		seq++
+		row := build(i, fmt.Sprintf("%s%03d", prefix, seq))
+		if _, err := tx.Exec(
+			`INSERT INTO knowledge
+			 (case_id, tactic_id, title, category, confidence, tags, summary, doc_json, doc_md, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			caseID, row.TacticID, row.Title, row.Category, row.Confidence,
+			row.TagsJSON, row.Summary, row.DocJSON, row.DocMD, createdAt); err != nil {
+			return fmt.Errorf("finalize pm run: insert knowledge: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// KnowledgeByCase returns the case's knowledge rows ordered by
+// tactic ID.
+func (s *Store) KnowledgeByCase(caseID int64) ([]KnowledgeRow, error) {
+	rows, err := s.db.Query(
+		`SELECT tactic_id, title, category, confidence, tags, summary, doc_json, doc_md
+		 FROM knowledge WHERE case_id=? ORDER BY tactic_id`, caseID)
+	if err != nil {
+		return nil, fmt.Errorf("knowledge case %d: %w", caseID, err)
+	}
+	defer rows.Close()
+	var out []KnowledgeRow
+	for rows.Next() {
+		var r KnowledgeRow
+		if err := rows.Scan(&r.TacticID, &r.Title, &r.Category, &r.Confidence,
+			&r.TagsJSON, &r.Summary, &r.DocJSON, &r.DocMD); err != nil {
+			return nil, fmt.Errorf("scan knowledge: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // ---- ACL audit ----

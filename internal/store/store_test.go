@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -17,17 +18,6 @@ func tempDB(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
-}
-
-func TestSchemaVersion(t *testing.T) {
-	s := tempDB(t)
-	v, err := s.SchemaVersion()
-	if err != nil {
-		t.Fatalf("SchemaVersion: %v", err)
-	}
-	if v != "1" {
-		t.Errorf("SchemaVersion = %q, want 1", v)
-	}
 }
 
 func TestCaseLifecycle(t *testing.T) {
@@ -189,6 +179,214 @@ func TestInsertDenial(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("denials = %d, want 1", n)
+	}
+}
+
+// TestSchemaVersionIsTwo replaces the old "= 1" expectation.
+func TestSchemaVersionIsTwo(t *testing.T) {
+	s := tempDB(t)
+	v, err := s.SchemaVersion()
+	if err != nil {
+		t.Fatalf("SchemaVersion: %v", err)
+	}
+	if v != "2" {
+		t.Errorf("SchemaVersion = %q, want 2", v)
+	}
+}
+
+// TestMigrateFromV1 builds a database the way v0.1.0 did (v1 DDL,
+// schema_version='1', existing data) and verifies Open migrates it
+// to v2 preserving data.
+func TestMigrateFromV1(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "v1.db")
+
+	// Hand-build a v1 database.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1stmts := []string{
+		`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`INSERT INTO meta VALUES ('schema_version', '1')`,
+		`CREATE TABLE cases (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+			severity TEXT NOT NULL, visibility TEXT NOT NULL,
+			channel_id TEXT UNIQUE, channel_name TEXT,
+			state TEXT NOT NULL DEFAULT 'creating',
+			opened_by TEXT NOT NULL, opened_at TEXT NOT NULL,
+			closed_by TEXT, closed_at TEXT)`,
+		`INSERT INTO cases (title, severity, visibility, channel_id, channel_name, state, opened_by, opened_at)
+		 VALUES ('legacy', 'high', 'private', 'C1', 'ir-0001-legacy', 'open', 'U1', '2026-06-01T00:00:00Z')`,
+		`CREATE TABLE messages (
+			channel_id TEXT NOT NULL, ts TEXT NOT NULL, case_id INTEGER NOT NULL,
+			thread_ts TEXT, user_id TEXT, bot_id TEXT, subtype TEXT,
+			text TEXT NOT NULL DEFAULT '', raw TEXT NOT NULL,
+			source TEXT NOT NULL, ingested_at TEXT NOT NULL,
+			PRIMARY KEY (channel_id, ts))`,
+		`INSERT INTO messages (channel_id, ts, case_id, text, raw, source, ingested_at)
+		 VALUES ('C1', '1718000000.000001', 1, 'hello', '{}', 'event', '2026-06-01T00:00:00Z')`,
+		`CREATE TABLE acl_denials (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, denied_at TEXT NOT NULL,
+			user_id TEXT NOT NULL, channel_id TEXT, entrypoint TEXT NOT NULL,
+			action TEXT, reason TEXT NOT NULL)`,
+	}
+	for _, stmt := range v1stmts {
+		if _, err := raw.Exec(stmt); err != nil {
+			t.Fatalf("v1 fixture: %v", err)
+		}
+	}
+	raw.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open v1 db: %v", err)
+	}
+	defer s.Close()
+
+	if v, _ := s.SchemaVersion(); v != "2" {
+		t.Errorf("migrated version = %q, want 2", v)
+	}
+	// Existing data preserved.
+	c, err := s.CaseByChannel("C1")
+	if err != nil || c.Title != "legacy" {
+		t.Errorf("legacy case = %+v, err %v", c, err)
+	}
+	if n, _ := s.CountMessages(1); n != 1 {
+		t.Errorf("legacy messages = %d, want 1", n)
+	}
+	// v2 tables usable.
+	if _, err := s.BeginPMRun(c.ID); err != nil {
+		t.Errorf("BeginPMRun on migrated db: %v", err)
+	}
+}
+
+func TestListMessagesOrder(t *testing.T) {
+	s := tempDB(t)
+	c, _ := s.CreateCase("a", "low", "public", "U1")
+	s.ActivateCase(c.ID, "C1", "ir-0001-a")
+	for _, ts := range []string{"1718000002.000001", "1718000000.000001", "1718000001.000001"} {
+		s.InsertMessage(Message{ChannelID: "C1", TS: ts, CaseID: c.ID, UserID: "U2",
+			Text: "m" + ts, Raw: "{}", Source: SourceEvent})
+	}
+	msgs, err := s.ListMessages(c.ID)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("len = %d", len(msgs))
+	}
+	for i := 1; i < len(msgs); i++ {
+		if msgs[i-1].TS > msgs[i].TS {
+			t.Errorf("not chronological: %s before %s", msgs[i-1].TS, msgs[i].TS)
+		}
+	}
+}
+
+func TestPMRunLifecycle(t *testing.T) {
+	s := tempDB(t)
+	c, _ := s.CreateCase("a", "low", "public", "U1")
+
+	runID, err := s.BeginPMRun(c.ID)
+	if err != nil {
+		t.Fatalf("BeginPMRun: %v", err)
+	}
+	// Second concurrent run refused.
+	if _, err := s.BeginPMRun(c.ID); !errors.Is(err, ErrPMRunning) {
+		t.Errorf("second BeginPMRun err = %v, want ErrPMRunning", err)
+	}
+
+	if err := s.FailPMRun(runID, "boom"); err != nil {
+		t.Fatalf("FailPMRun: %v", err)
+	}
+	r, err := s.LatestPMRun(c.ID)
+	if err != nil || r.Status != "failed" || r.Error != "boom" {
+		t.Errorf("latest = %+v, err %v", r, err)
+	}
+
+	// After failure a new run may start.
+	if _, err := s.BeginPMRun(c.ID); err != nil {
+		t.Errorf("BeginPMRun after failure: %v", err)
+	}
+}
+
+func TestFinalizePMRunReplacesKnowledge(t *testing.T) {
+	fixed := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"),
+		WithClock(func() time.Time { return fixed }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	c, _ := s.CreateCase("a", "low", "public", "U1")
+	c2, _ := s.CreateCase("b", "low", "public", "U1")
+
+	build := func(titles ...string) func(int, string) KnowledgeRow {
+		return func(i int, tacticID string) KnowledgeRow {
+			return KnowledgeRow{TacticID: tacticID, Title: titles[i], Category: "log-analysis",
+				Confidence: "confirmed", TagsJSON: `["x"]`, Summary: "s",
+				DocJSON: `{"id":"` + tacticID + `"}`, DocMD: "# " + titles[i]}
+		}
+	}
+
+	// Another case already holds today's 001.
+	run2, _ := s.BeginPMRun(c2.ID)
+	if err := s.FinalizePMRun(run2, c2.ID, "{}", "# r", 1, build("other")); err != nil {
+		t.Fatalf("finalize c2: %v", err)
+	}
+
+	run1, _ := s.BeginPMRun(c.ID)
+	if err := s.FinalizePMRun(run1, c.ID, `{"a":1}`, "# report", 2, build("t1", "t2")); err != nil {
+		t.Fatalf("finalize c1: %v", err)
+	}
+
+	rows, err := s.KnowledgeByCase(c.ID)
+	if err != nil {
+		t.Fatalf("KnowledgeByCase: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("knowledge rows = %d, want 2", len(rows))
+	}
+	// IDs continue from the day's max (other case took 001).
+	if rows[0].TacticID != "tac-20260610-002" || rows[1].TacticID != "tac-20260610-003" {
+		t.Errorf("tactic ids = %s, %s", rows[0].TacticID, rows[1].TacticID)
+	}
+
+	r, _ := s.LatestPMRun(c.ID)
+	if r.Status != "done" || r.ReportMD != "# report" {
+		t.Errorf("run = %+v", r)
+	}
+
+	// Re-run replaces this case's knowledge; the other case's stays.
+	run3, _ := s.BeginPMRun(c.ID)
+	if err := s.FinalizePMRun(run3, c.ID, "{}", "# v2", 1, build("t3")); err != nil {
+		t.Fatalf("finalize rerun: %v", err)
+	}
+	rows, _ = s.KnowledgeByCase(c.ID)
+	if len(rows) != 1 || rows[0].Title != "t3" {
+		t.Errorf("after rerun rows = %+v", rows)
+	}
+	other, _ := s.KnowledgeByCase(c2.ID)
+	if len(other) != 1 {
+		t.Errorf("other case knowledge lost: %+v", other)
+	}
+}
+
+func TestFailStaleRuns(t *testing.T) {
+	s := tempDB(t)
+	c, _ := s.CreateCase("a", "low", "public", "U1")
+	s.BeginPMRun(c.ID)
+
+	n, err := s.FailStaleRuns()
+	if err != nil {
+		t.Fatalf("FailStaleRuns: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("stale = %d, want 1", n)
+	}
+	r, _ := s.LatestPMRun(c.ID)
+	if r.Status != "failed" || r.Error != "interrupted by restart" {
+		t.Errorf("run = %+v", r)
 	}
 }
 
