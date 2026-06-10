@@ -35,3 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Developer ID codesign + notarize scripts, configuration template
 - Approved project RFP (`docs/en/ir-hub-rfp.md` /
   `docs/ja/ir-hub-rfp.ja.md`)
+
+### Docs
+
+- Slack App Setup Handbook (`docs/en/slack-app-setup.md` /
+  `docs/ja/slack-app-setup.ja.md`): manifest walkthrough, per-scope
+  justifications for admin approval, token handling, verification
+  checklist, troubleshooting
+- Recommended App description copy (short / long, EN + JA) embedded
+  in the manifests in the README and handbook

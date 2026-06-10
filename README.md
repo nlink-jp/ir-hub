@@ -64,6 +64,25 @@ Create an app from this manifest (App settings → App Manifest):
 ```yaml
 display_information:
   name: ir-hub
+  description: >-
+    Incident-response lifecycle hub: opens a channel per case, tracks
+    the response, runs postmortems, and reuses the lessons learned.
+  long_description: |-
+    ir-hub supports security incident-response teams across the full
+    lifecycle of a case.
+
+    - /ir-hub new opens a dedicated case channel, invites the opener,
+      and posts a kickoff briefing
+    - /ir-hub status summarizes the current state of the case
+    - /ir-hub close ends the response and runs an automated postmortem
+    - Lessons learned are accumulated as knowledge and reused on
+      future incidents
+
+    Access is restricted to the IR team by an in-app allowlist, and
+    denied attempts are audit-logged. Messages are ingested only from
+    case channels the app itself creates.
+
+    Operated by: <your IR team>  /  Questions: #<your-contact-channel>
 features:
   bot_user:
     display_name: ir-hub

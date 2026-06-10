@@ -57,7 +57,25 @@ WebSocket. Consequences worth knowing before you start:
 ```yaml
 display_information:
   name: ir-hub
-  description: Incident-response lifecycle hub
+  description: >-
+    Incident-response lifecycle hub: opens a channel per case, tracks
+    the response, runs postmortems, and reuses the lessons learned.
+  long_description: |-
+    ir-hub supports security incident-response teams across the full
+    lifecycle of a case.
+
+    - /ir-hub new opens a dedicated case channel, invites the opener,
+      and posts a kickoff briefing
+    - /ir-hub status summarizes the current state of the case
+    - /ir-hub close ends the response and runs an automated postmortem
+    - Lessons learned are accumulated as knowledge and reused on
+      future incidents
+
+    Access is restricted to the IR team by an in-app allowlist, and
+    denied attempts are audit-logged. Messages are ingested only from
+    case channels the app itself creates.
+
+    Operated by: <your IR team>  /  Questions: #<your-contact-channel>
 features:
   bot_user:
     display_name: ir-hub
@@ -93,6 +111,53 @@ settings:
     is_enabled: true
   socket_mode_enabled: true
 ```
+
+### 3.1 App description texts (recommended copy)
+
+The About-page texts are read by users browsing the app and by
+admins reviewing approval requests — worth getting right, annoying
+to write. Recommended copy below; the manifest above already
+embeds the English version.
+
+Constraints: `description` (short) max **140 characters**;
+`long_description` **175–4000 characters**. Replace the
+`<your IR team>` / `#<your-contact-channel>` placeholders — a
+listed operator and contact channel noticeably smooths admin
+approval.
+
+**Short description (EN, 131 chars):**
+
+> Incident-response lifecycle hub: opens a channel per case, tracks
+> the response, runs postmortems, and reuses the lessons learned.
+
+**Short description (JA):**
+
+> インシデント対応のライフサイクルハブ。案件チャネルの開設、対応支援、
+> ポストモーテム、知見の再利用を一気通貫で支援します。
+
+**Long description (EN):** see the manifest above.
+
+**Long description (JA):**
+
+> ir-hub はセキュリティインシデント対応チームのためのライフサイクル
+> ハブです。
+>
+> ・/ir-hub new — 案件専用チャネルを開設し、起票者を招待して
+> キックオフを投稿
+> ・/ir-hub status — 案件の現在状況を要約
+> ・/ir-hub close — 対応を終了し、ポストモーテムを自動実行
+> ・対応から得られた知見を蓄積し、以降の案件で再利用
+>
+> 利用はアプリ内の許可リストにより IR チームに限定され、拒否は監査
+> ログに記録されます。メッセージの取り込みは ir-hub 自身が作成した
+> 案件チャネルのみが対象です。
+>
+> 運用: <your IR team> / 問い合わせ: #<your-contact-channel>
+
+Pick the language matching your workspace's primary language (the
+About page shows one text, not both). `background_color` is
+optional cosmetics — e.g. `"#7a1c1c"` reads appropriately
+incident-y on app cards.
 
 Notes:
 

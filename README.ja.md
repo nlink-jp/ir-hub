@@ -59,6 +59,24 @@
 ```yaml
 display_information:
   name: ir-hub
+  description: >-
+    インシデント対応のライフサイクルハブ。案件チャネルの開設、対応支援、
+    ポストモーテム、知見の再利用を一気通貫で支援します。
+  long_description: |-
+    ir-hub はセキュリティインシデント対応チームのためのライフサイクル
+    ハブです。
+
+    ・/ir-hub new — 案件専用チャネルを開設し、起票者を招待して
+      キックオフを投稿
+    ・/ir-hub status — 案件の現在状況を要約
+    ・/ir-hub close — 対応を終了し、ポストモーテムを自動実行
+    ・対応から得られた知見を蓄積し、以降の案件で再利用
+
+    利用はアプリ内の許可リストにより IR チームに限定され、拒否は監査
+    ログに記録されます。メッセージの取り込みは ir-hub 自身が作成した
+    案件チャネルのみが対象です。
+
+    運用: <your IR team> / 問い合わせ: #<your-contact-channel>
 features:
   bot_user:
     display_name: ir-hub
