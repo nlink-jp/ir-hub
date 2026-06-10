@@ -25,6 +25,7 @@ type Fake struct {
 	GetUserGroupMembersFn    func(ctx context.Context, groupID string) ([]string, error)
 	GetConversationHistoryFn func(ctx context.Context, params *slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error)
 	AuthTestFn               func(ctx context.Context) (*slack.AuthTestResponse, error)
+	PostResponseFn           func(ctx context.Context, responseURL, text string) error
 }
 
 func (f *Fake) record(name string) {
@@ -115,4 +116,12 @@ func (f *Fake) AuthTest(ctx context.Context) (*slack.AuthTestResponse, error) {
 		return f.AuthTestFn(ctx)
 	}
 	return &slack.AuthTestResponse{UserID: "UBOT"}, nil
+}
+
+func (f *Fake) PostResponse(ctx context.Context, responseURL, text string) error {
+	f.record("PostResponse")
+	if f.PostResponseFn != nil {
+		return f.PostResponseFn(ctx, responseURL, text)
+	}
+	return nil
 }

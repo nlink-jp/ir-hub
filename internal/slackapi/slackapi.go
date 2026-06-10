@@ -33,6 +33,10 @@ type API interface {
 	GetConversationHistory(ctx context.Context, params *slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error)
 	// AuthTest returns the bot's own identity.
 	AuthTest(ctx context.Context) (*slack.AuthTestResponse, error)
+	// PostResponse posts an ephemeral reply to a slash command's
+	// response_url — works even when the bot is not a member of the
+	// originating channel.
+	PostResponse(ctx context.Context, responseURL, text string) error
 }
 
 // Adapter implements API on a real *slack.Client.
@@ -86,4 +90,11 @@ func (a *Adapter) GetConversationHistory(ctx context.Context, params *slack.GetC
 
 func (a *Adapter) AuthTest(ctx context.Context) (*slack.AuthTestResponse, error) {
 	return a.c.AuthTestContext(ctx)
+}
+
+func (a *Adapter) PostResponse(ctx context.Context, responseURL, text string) error {
+	return slack.PostWebhookContext(ctx, responseURL, &slack.WebhookMessage{
+		Text:         text,
+		ResponseType: "ephemeral",
+	})
 }

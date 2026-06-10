@@ -167,6 +167,30 @@ func TestGetConversationHistory(t *testing.T) {
 	}
 }
 
+func TestPostResponse(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Write([]byte("ok"))
+	}))
+	t.Cleanup(srv.Close)
+
+	a := NewAdapter(slack.New("xoxb-test"))
+	if err := a.PostResponse(context.Background(), srv.URL, "done"); err != nil {
+		t.Fatalf("PostResponse: %v", err)
+	}
+	var sent struct {
+		Text         string `json:"text"`
+		ResponseType string `json:"response_type"`
+	}
+	if err := json.Unmarshal(gotBody, &sent); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if sent.Text != "done" || sent.ResponseType != "ephemeral" {
+		t.Errorf("sent = %+v", sent)
+	}
+}
+
 func TestAuthTest(t *testing.T) {
 	a, _, _ := newTestAdapter(t, map[string]string{
 		"/auth.test": `{"ok": true, "user_id": "UBOT", "bot_id": "B1", "user": "ir-hub"}`,
