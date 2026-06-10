@@ -16,6 +16,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// flagConfig is the --config persistent flag, shared by all
+// subcommands. Empty means config.DefaultPath().
+var flagConfig string
+
 var rootCmd = &cobra.Command{
 	Use:   "ir-hub",
 	Short: "Incident-response lifecycle hub — Slack ChatOps bot",
@@ -25,8 +29,14 @@ dedicated channel per case, supports the response while it is in
 flight, runs an LLM postmortem on close, and accumulates the
 extracted knowledge for reuse on future incidents.
 
-Subcommands (serve, export, ...) arrive with Phase 1 development.
-For design rationale see docs/en/ir-hub-rfp.md (the project RFP).`,
+Start the bot with "ir-hub serve". Knowledge export (export) and
+LLM analysis arrive in later phases. For design rationale see
+docs/en/ir-hub-rfp.md (the project RFP).`,
+}
+
+func init() {
+	rootCmd.PersistentFlags().StringVarP(&flagConfig, "config", "c", "",
+		"path to config.toml (default: ~/.config/ir-hub/config.toml)")
 }
 
 // Execute runs the root command. Called from main.go with the
