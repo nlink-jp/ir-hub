@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     automatic reconnect, redelivered-envelope dedup, immediate acks
     (3-second rule), and graceful shutdown draining in-flight work
   - `/ir-hub new <title> [--severity] [--private|--public]`: creates
-    the case channel (sequence-numbered name), invites the opener,
+    the case channel (sequence-numbered name; slugs keep Unicode
+    letters so Japanese titles stay readable), invites the opener,
     posts a kickoff message
   - `/ir-hub close` and `/ir-hub status` (metadata summary)
   - Bare `/ir-hub` opens a Block Kit modal: action picker → new-case

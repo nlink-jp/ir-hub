@@ -114,8 +114,10 @@ After Phase 3 completes:
 - **Slash command visibility cannot be restricted by Slack** — the
   app-side ACL is the only gate. Default reply to denied users is
   silent + audit log (noise control in a ~50k-member workspace).
-- **Channel names**: lowercase, ≤ 80 chars, unique workspace-wide
-  including archived channels — include a sequence/date in the name.
+- **Channel names**: ≤ 80 chars, unique workspace-wide including
+  archived channels. Slugs keep Unicode letters/digits (Japanese
+  titles stay readable: `ir-0001-情報漏えい`); uniqueness comes from
+  the DB sequence number, never from the slug.
 - **Long reports**: Block Kit section limit is 3,000 chars; split or
   post as file snippets (`files:write`).
 - Keep `CGO_ENABLED=0` cross-compile working: prefer a pure-Go

@@ -27,8 +27,9 @@ name = "gemini-2.5-flash"
 # One of: private, public. Overridable per case with
 # --private / --public flags.
 default_visibility = "private"
-# Case channels are named <prefix><sequence>-<slug>. Slack requires
-# lowercase, <= 80 chars, unique workspace-wide incl. archived.
+# Case channels are named <prefix><sequence>-<slug>. The slug keeps
+# Unicode letters/digits (Japanese titles stay readable); <= 80
+# chars, unique workspace-wide incl. archived via the sequence.
 name_prefix = "ir-"
 
 [acl]
