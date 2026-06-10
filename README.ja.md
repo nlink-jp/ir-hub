@@ -135,6 +135,10 @@ make build          # → dist/ir-hub
 (例: `IRHUB_ACL_ALLOW_GROUPS=ir-team,secops`)。設定ファイル内の未知の
 キーはエラーになるため、typo は即座に検出されます。
 
+`language = "ja"`(または `IRHUB_LANGUAGE=ja`)を設定すると、ユーザーに
+見えるすべてのメッセージ — モーダル、キックオフ/ステータス/クローズ投稿、
+エラー — が日本語になります。ログは英語のままです。
+
 Slack トークンは設定ファイルの `[slack]` セクションまたは環境変数で
 指定します(環境変数が優先):
 

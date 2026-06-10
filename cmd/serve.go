@@ -16,6 +16,7 @@ import (
 	"github.com/nlink-jp/ir-hub/internal/cases"
 	"github.com/nlink-jp/ir-hub/internal/config"
 	"github.com/nlink-jp/ir-hub/internal/ingest"
+	"github.com/nlink-jp/ir-hub/internal/msg"
 	"github.com/nlink-jp/ir-hub/internal/slackapi"
 	"github.com/nlink-jp/ir-hub/internal/store"
 )
@@ -80,9 +81,11 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	catalog := msg.For(cfg.Language)
 	caseSvc := cases.New(api, st, cases.Config{
 		DefaultVisibility: cfg.Channel.DefaultVisibility,
 		NamePrefix:        cfg.Channel.NamePrefix,
+		Msg:               catalog,
 	})
 	ing := ingest.New(api, st)
 
@@ -90,6 +93,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		bot.Config{
 			DefaultVisibility: cfg.Channel.DefaultVisibility,
 			NotifyDenied:      cfg.ACL.NotifyDenied,
+			Msg:               catalog,
 		})
 
 	log.Printf("serve: ir-hub %s starting (db: %s)", rootCmd.Version, cfg.DB.Path)

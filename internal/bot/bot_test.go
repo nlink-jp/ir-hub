@@ -17,6 +17,7 @@ import (
 	"github.com/nlink-jp/ir-hub/internal/cases"
 	"github.com/nlink-jp/ir-hub/internal/ingest"
 	"github.com/nlink-jp/ir-hub/internal/modal"
+	"github.com/nlink-jp/ir-hub/internal/msg"
 	"github.com/nlink-jp/ir-hub/internal/slackapi/slackapitest"
 	"github.com/nlink-jp/ir-hub/internal/store"
 )
@@ -505,6 +506,50 @@ func TestRunLoopAndShutdown(t *testing.T) {
 	if _, err := h.store.CaseByID(1); err != nil {
 		t.Errorf("case from run-loop event missing: %v", err)
 	}
+}
+
+func TestSlashParseErrorJapanese(t *testing.T) {
+	var mu sync.Mutex
+	var responses []string
+	api := &slackapitest.Fake{
+		PostResponseFn: func(ctx context.Context, url, text string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			responses = append(responses, text)
+			return nil
+		},
+	}
+	h := newHarnessLang(t, api, Config{Msg: &msg.JA})
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "CORIGIN", "destroy everything"))
+	h.bot.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(responses) != 1 || !strings.Contains(responses[0], "未知のサブコマンド") {
+		t.Errorf("responses = %v, want Japanese parse error", responses)
+	}
+}
+
+// newHarnessLang is newHarness but honoring cfg.Msg for both the
+// bot and the cases service.
+func newHarnessLang(t *testing.T, api *slackapitest.Fake, cfg Config) *harness {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	checker := acl.New(acl.Config{
+		AllowUsers: []string{"U-OK"},
+		CacheTTL:   time.Minute,
+	}, groupResolver{})
+	caseSvc := cases.New(api, st, cases.Config{DefaultVisibility: "private", NamePrefix: "ir-", Msg: cfg.Msg})
+	ing := ingest.New(api, st, ingest.WithLogger(t.Logf))
+	sock := newFakeSocket()
+	b := New(sock, api, st, checker, caseSvc, ing, cfg, WithLogger(t.Logf))
+	return &harness{bot: b, socket: sock, api: api, store: st}
 }
 
 func TestFirstWord(t *testing.T) {

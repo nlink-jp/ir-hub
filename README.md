@@ -141,6 +141,10 @@ field can be overridden with `IRHUB_*` environment variables
 (e.g. `IRHUB_ACL_ALLOW_GROUPS=ir-team,secops`). Unknown keys in the
 file are an error, so typos fail fast.
 
+Set `language = "ja"` (or `IRHUB_LANGUAGE=ja`) to switch every
+user-facing message — modals, kickoff/status/close posts, errors —
+to Japanese. Logs stay English.
+
 Slack tokens go in the `[slack]` section of the config file or in
 the environment (environment wins):
 

@@ -36,6 +36,7 @@ ir-hub/
 │   └── serve.go            # `ir-hub serve` — wiring only, no logic
 ├── internal/
 │   ├── config/             # strict TOML + IRHUB_* env (unknown keys error)
+│   ├── msg/                # en/ja user-facing message catalog (language key)
 │   ├── store/              # SQLite (modernc.org/sqlite): cases/messages/acl_denials/meta
 │   ├── command/            # slash-command text parser (dependency-free)
 │   ├── channelname/        # <prefix><%04d seq>[-<slug>] generator
@@ -82,6 +83,10 @@ prefix. Load warns when the config file is group/other readable
   (`backoff`), and LLM JSON parsing (`jsonfix`)
 - ACL checks guard EVERY entry point (slash command, mention);
   deny-by-default when no whitelist is configured
+- Every user-visible string goes through `internal/msg` (en + ja).
+  Never hardcode user-facing text in bot/cases/modal; add a Catalog
+  field with BOTH translations (tests enforce completeness and
+  fmt-verb parity). Logs stay English.
 
 ## Release process
 

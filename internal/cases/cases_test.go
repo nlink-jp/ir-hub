@@ -12,6 +12,7 @@ import (
 	"github.com/slack-go/slack"
 
 	"github.com/nlink-jp/ir-hub/internal/command"
+	"github.com/nlink-jp/ir-hub/internal/msg"
 	"github.com/nlink-jp/ir-hub/internal/slackapi/slackapitest"
 	"github.com/nlink-jp/ir-hub/internal/store"
 )
@@ -233,8 +234,38 @@ func TestFormatDuration(t *testing.T) {
 		{25*time.Hour + 5*time.Minute, "25h05m"},
 	}
 	for _, tt := range tests {
-		if got := formatDuration(tt.d); got != tt.want {
+		if got := formatDuration(tt.d, &msg.EN); got != tt.want {
 			t.Errorf("formatDuration(%v) = %q, want %q", tt.d, got, tt.want)
+		}
+	}
+	if got := formatDuration(30*time.Second, &msg.JA); got != "1分未満" {
+		t.Errorf("formatDuration(ja) = %q, want 1分未満", got)
+	}
+}
+
+func TestKickoffJapanese(t *testing.T) {
+	var kickoff string
+	fake := &slackapitest.Fake{
+		PostMessageFn: func(ctx context.Context, channelID string, opts ...slack.MsgOption) (string, error) {
+			_, values, err := slack.UnsafeApplyMsgOptions("tok", channelID, "https://slack.test/api/", opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			kickoff = values.Get("text")
+			return "1.1", nil
+		},
+	}
+	svc, _ := newService(t, fake, Config{DefaultVisibility: "private", NamePrefix: "ir-", Msg: &msg.JA})
+
+	_, err := svc.NewCase(context.Background(), NewRequest{
+		Title: "情報漏えい", Severity: "high", OpenedBy: "U001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"案件 #0001 を開設: 情報漏えい", "重要度: `high`", "起票者: <@U001>", "プライベート"} {
+		if !strings.Contains(kickoff, want) {
+			t.Errorf("kickoff missing %q:\n%s", want, kickoff)
 		}
 	}
 }

@@ -8,12 +8,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/slack-go/slack"
 
 	"github.com/nlink-jp/ir-hub/internal/channelname"
 	"github.com/nlink-jp/ir-hub/internal/command"
+	"github.com/nlink-jp/ir-hub/internal/msg"
 	"github.com/nlink-jp/ir-hub/internal/slackapi"
 	"github.com/nlink-jp/ir-hub/internal/store"
 )
@@ -26,6 +28,8 @@ var ErrNotCaseChannel = errors.New("this channel is not an ir-hub case channel")
 type Config struct {
 	DefaultVisibility string // "public" | "private"
 	NamePrefix        string
+	// Msg is the user-facing message catalog; nil means English.
+	Msg *msg.Catalog
 }
 
 // Service implements the case lifecycle.
@@ -46,6 +50,9 @@ func WithClock(now func() time.Time) Option {
 
 // New creates a Service.
 func New(api slackapi.API, st *store.Store, cfg Config, opts ...Option) *Service {
+	if cfg.Msg == nil {
+		cfg.Msg = &msg.EN
+	}
 	s := &Service{api: api, store: st, cfg: cfg, now: time.Now}
 	for _, opt := range opts {
 		opt(s)
@@ -104,11 +111,11 @@ func (s *Service) NewCase(ctx context.Context, req NewRequest) (*NewResult, erro
 
 	res := &NewResult{}
 	if err := s.api.InviteUsers(ctx, ch.ID, req.OpenedBy); err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("could not invite <@%s>: %v", req.OpenedBy, err))
+		res.Warnings = append(res.Warnings, s.cfg.Msg.F(s.cfg.Msg.WarnInviteFailed, req.OpenedBy, err))
 	}
 	if _, err := s.api.PostMessage(ctx, ch.ID,
-		slack.MsgOptionText(kickoffText(c.ID, req, private), false)); err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("could not post kickoff message: %v", err))
+		slack.MsgOptionText(s.kickoffText(c.ID, req, private), false)); err != nil {
+		res.Warnings = append(res.Warnings, s.cfg.Msg.F(s.cfg.Msg.WarnKickoffFailed, err))
 	}
 
 	res.Case, err = s.store.CaseByID(c.ID)
@@ -118,19 +125,18 @@ func (s *Service) NewCase(ctx context.Context, req NewRequest) (*NewResult, erro
 	return res, nil
 }
 
-func kickoffText(id int64, req NewRequest, private bool) string {
-	text := fmt.Sprintf(
-		":rotating_light: *Case #%04d opened: %s*\n"+
-			"• Severity: `%s`\n"+
-			"• Opened by: <@%s>\n"+
-			"• Close with `/ir-hub close` when the response is done — "+
-			"the postmortem will run from there (Phase 2).",
-		id, req.Title, req.Severity, req.OpenedBy)
-	if private {
-		text += "\n• This channel is *private*: it cannot be converted to public " +
-			"later, and ir-hub must remain a member to keep ingesting messages."
+func (s *Service) kickoffText(id int64, req NewRequest, private bool) string {
+	m := s.cfg.Msg
+	lines := []string{
+		m.F(m.KickoffHeader, id, req.Title),
+		m.F(m.KickoffSeverity, req.Severity),
+		m.F(m.KickoffOpenedBy, req.OpenedBy),
+		m.KickoffCloseHint,
 	}
-	return text
+	if private {
+		lines = append(lines, m.KickoffPrivateNote)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Close transitions the case bound to channelID to closed and posts
@@ -147,7 +153,7 @@ func (s *Service) Close(ctx context.Context, channelID, closedBy string) (*store
 		return nil, err
 	}
 	if _, err := s.api.PostMessage(ctx, channelID, slack.MsgOptionText(
-		fmt.Sprintf(":white_check_mark: *Case #%04d closed* by <@%s>.", c.ID, closedBy), false)); err != nil {
+		s.cfg.Msg.F(s.cfg.Msg.CaseClosed, c.ID, closedBy), false)); err != nil {
 		// The state change already happened; surface but don't undo.
 		return nil, fmt.Errorf("case closed but posting the closing note failed: %w", err)
 	}
@@ -169,32 +175,33 @@ func (s *Service) Status(ctx context.Context, channelID string) (string, error) 
 		return "", err
 	}
 
-	text := fmt.Sprintf("*Case #%04d: %s*\n"+
-		"• State: `%s`\n"+
-		"• Severity: `%s`\n"+
-		"• Opened: %s by <@%s>\n",
-		c.ID, c.Title, c.State, c.Severity,
-		c.OpenedAt.UTC().Format("2006-01-02 15:04 MST"), c.OpenedBy)
-	if c.State == store.StateClosed {
-		text += fmt.Sprintf("• Closed: %s by <@%s>\n",
-			c.ClosedAt.UTC().Format("2006-01-02 15:04 MST"), c.ClosedBy)
-		text += fmt.Sprintf("• Duration: %s\n", formatDuration(c.ClosedAt.Sub(c.OpenedAt)))
-	} else {
-		text += fmt.Sprintf("• Open for: %s\n", formatDuration(s.now().Sub(c.OpenedAt)))
+	m := s.cfg.Msg
+	lines := []string{
+		m.F(m.StatusHeader, c.ID, c.Title),
+		m.F(m.StatusState, c.State),
+		m.F(m.StatusSeverity, c.Severity),
+		m.F(m.StatusOpened, c.OpenedAt.UTC().Format("2006-01-02 15:04 MST"), c.OpenedBy),
 	}
-	text += fmt.Sprintf("• Ingested messages: %d", count)
-	return text, nil
+	if c.State == store.StateClosed {
+		lines = append(lines,
+			m.F(m.StatusClosed, c.ClosedAt.UTC().Format("2006-01-02 15:04 MST"), c.ClosedBy),
+			m.F(m.StatusDuration, formatDuration(c.ClosedAt.Sub(c.OpenedAt), m)))
+	} else {
+		lines = append(lines, m.F(m.StatusOpenFor, formatDuration(s.now().Sub(c.OpenedAt), m)))
+	}
+	lines = append(lines, m.F(m.StatusMessages, count))
+	return strings.Join(lines, "\n"), nil
 }
 
-func formatDuration(d time.Duration) string {
+func formatDuration(d time.Duration, m *msg.Catalog) string {
 	if d < time.Minute {
-		return "less than a minute"
+		return m.DurationLessThanMinute
 	}
 	d = d.Round(time.Minute)
 	h := d / time.Hour
-	m := (d % time.Hour) / time.Minute
+	mm := (d % time.Hour) / time.Minute
 	if h == 0 {
-		return fmt.Sprintf("%dm", m)
+		return fmt.Sprintf("%dm", mm)
 	}
-	return fmt.Sprintf("%dh%02dm", h, m)
+	return fmt.Sprintf("%dh%02dm", h, mm)
 }

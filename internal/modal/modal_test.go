@@ -2,17 +2,19 @@ package modal
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/slack-go/slack"
 
 	"github.com/nlink-jp/ir-hub/internal/command"
+	"github.com/nlink-jp/ir-hub/internal/msg"
 )
 
 var meta = Metadata{ChannelID: "C123", UserID: "U001"}
 
 func TestBuildActionPicker(t *testing.T) {
-	view := BuildActionPicker(meta)
+	view := BuildActionPicker(meta, &msg.EN)
 
 	if view.CallbackID != CallbackAction {
 		t.Errorf("CallbackID = %q", view.CallbackID)
@@ -60,8 +62,22 @@ func TestBuildActionPicker(t *testing.T) {
 	}
 }
 
+func TestBuildNewCaseJapaneseLabels(t *testing.T) {
+	view := BuildNewCase(meta, "private", &msg.JA)
+	b, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{"新規案件", "タイトル", "重要度", "チャネル公開範囲", "案件を開設", "キャンセル"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("JA view missing %q", want)
+		}
+	}
+}
+
 func TestBuildNewCase(t *testing.T) {
-	view := BuildNewCase(meta, "private")
+	view := BuildNewCase(meta, "private", &msg.EN)
 	if view.CallbackID != CallbackNew {
 		t.Errorf("CallbackID = %q", view.CallbackID)
 	}
@@ -161,7 +177,7 @@ func TestParseNewCase(t *testing.T) {
 		"severity":   {"value": selected("high")},
 		"visibility": {"value": selected("public")},
 	})
-	args, gotMeta, fieldErrs, err := ParseNewCase(view)
+	args, gotMeta, fieldErrs, err := ParseNewCase(view, &msg.EN)
 	if err != nil {
 		t.Fatalf("ParseNewCase: %v", err)
 	}
@@ -183,7 +199,7 @@ func TestParseNewCaseEmptyTitle(t *testing.T) {
 		"severity":   {"value": selected("low")},
 		"visibility": {"value": selected("private")},
 	})
-	_, _, fieldErrs, err := ParseNewCase(view)
+	_, _, fieldErrs, err := ParseNewCase(view, &msg.EN)
 	if err != nil {
 		t.Fatalf("ParseNewCase: %v", err)
 	}
@@ -197,7 +213,7 @@ func TestParseNewCaseDefaults(t *testing.T) {
 	view := fakeView(CallbackNew, encodeMeta(meta), map[string]map[string]slack.BlockAction{
 		"title": {"value": typed("x")},
 	})
-	args, _, fieldErrs, err := ParseNewCase(view)
+	args, _, fieldErrs, err := ParseNewCase(view, &msg.EN)
 	if err != nil || len(fieldErrs) != 0 {
 		t.Fatalf("ParseNewCase: %v %v", err, fieldErrs)
 	}

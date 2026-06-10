@@ -16,6 +16,7 @@ import (
 	"github.com/slack-go/slack"
 
 	"github.com/nlink-jp/ir-hub/internal/command"
+	"github.com/nlink-jp/ir-hub/internal/msg"
 )
 
 // Callback IDs routing view_submission events.
@@ -64,32 +65,32 @@ func plainText(s string) *slack.TextBlockObject {
 }
 
 // BuildActionPicker is the first-stage modal: choose an action.
-func BuildActionPicker(meta Metadata) slack.ModalViewRequest {
+func BuildActionPicker(meta Metadata, cat *msg.Catalog) slack.ModalViewRequest {
 	options := []*slack.OptionBlockObject{
-		slack.NewOptionBlockObject(ActionNew, plainText("Open a new case"), nil),
-		slack.NewOptionBlockObject(ActionClose, plainText("Close this case"), nil),
-		slack.NewOptionBlockObject(ActionStatus, plainText("Show case status"), nil),
+		slack.NewOptionBlockObject(ActionNew, plainText(cat.ModalActionNew), nil),
+		slack.NewOptionBlockObject(ActionClose, plainText(cat.ModalActionClose), nil),
+		slack.NewOptionBlockObject(ActionStatus, plainText(cat.ModalActionStatus), nil),
 	}
 	sel := slack.NewOptionsSelectBlockElement(
-		slack.OptTypeStatic, plainText("Select an action"), actionIDValue, options...)
+		slack.OptTypeStatic, plainText(cat.ModalActionPlaceholder), actionIDValue, options...)
 
 	return slack.ModalViewRequest{
 		Type:            slack.ViewType("modal"),
 		CallbackID:      CallbackAction,
 		PrivateMetadata: encodeMeta(meta),
-		Title:           plainText("ir-hub"),
-		Submit:          plainText("Next"),
-		Close:           plainText("Cancel"),
+		Title:           plainText(cat.ModalTitle),
+		Submit:          plainText(cat.ModalNext),
+		Close:           plainText(cat.ModalCancel),
 		Blocks: slack.Blocks{BlockSet: []slack.Block{
-			slack.NewInputBlock(blockAction, plainText("Action"), nil, sel),
+			slack.NewInputBlock(blockAction, plainText(cat.ModalActionLabel), nil, sel),
 		}},
 	}
 }
 
 // BuildNewCase is the second-stage modal: parameters for "new".
 // defaultVisibility preselects the configured channel visibility.
-func BuildNewCase(meta Metadata, defaultVisibility string) slack.ModalViewRequest {
-	title := slack.NewPlainTextInputBlockElement(plainText("e.g. DB outage in production"), actionIDValue)
+func BuildNewCase(meta Metadata, defaultVisibility string, cat *msg.Catalog) slack.ModalViewRequest {
+	title := slack.NewPlainTextInputBlockElement(plainText(cat.ModalNewTitlePlaceholder), actionIDValue)
 	title.MaxLength = 150
 
 	sevOptions := make([]*slack.OptionBlockObject, 0, len(command.Severities))
@@ -102,12 +103,12 @@ func BuildNewCase(meta Metadata, defaultVisibility string) slack.ModalViewReques
 		}
 	}
 	sev := slack.NewOptionsSelectBlockElement(
-		slack.OptTypeStatic, plainText("Severity"), actionIDValue, sevOptions...)
+		slack.OptTypeStatic, plainText(cat.ModalSeverityLabel), actionIDValue, sevOptions...)
 	sev.InitialOption = sevInitial
 
 	visOptions := []*slack.OptionBlockObject{
-		slack.NewOptionBlockObject("private", plainText("Private channel"), nil),
-		slack.NewOptionBlockObject("public", plainText("Public channel"), nil),
+		slack.NewOptionBlockObject("private", plainText(cat.ModalVisibilityPrivate), nil),
+		slack.NewOptionBlockObject("public", plainText(cat.ModalVisibilityPublic), nil),
 	}
 	vis := slack.NewRadioButtonsBlockElement(actionIDValue, visOptions...)
 	for _, o := range visOptions {
@@ -120,13 +121,13 @@ func BuildNewCase(meta Metadata, defaultVisibility string) slack.ModalViewReques
 		Type:            slack.ViewType("modal"),
 		CallbackID:      CallbackNew,
 		PrivateMetadata: encodeMeta(meta),
-		Title:           plainText("New case"),
-		Submit:          plainText("Open case"),
-		Close:           plainText("Cancel"),
+		Title:           plainText(cat.ModalNewTitle),
+		Submit:          plainText(cat.ModalOpenCase),
+		Close:           plainText(cat.ModalCancel),
 		Blocks: slack.Blocks{BlockSet: []slack.Block{
-			slack.NewInputBlock(blockTitle, plainText("Title"), nil, title),
-			slack.NewInputBlock(blockSeverity, plainText("Severity"), nil, sev),
-			slack.NewInputBlock(blockVisibility, plainText("Channel visibility"), nil, vis),
+			slack.NewInputBlock(blockTitle, plainText(cat.ModalNewTitleLabel), nil, title),
+			slack.NewInputBlock(blockSeverity, plainText(cat.ModalSeverityLabel), nil, sev),
+			slack.NewInputBlock(blockVisibility, plainText(cat.ModalVisibilityLabel), nil, vis),
 		}},
 	}
 }
@@ -155,10 +156,10 @@ func ParseAction(view slack.View) (string, Metadata, error) {
 }
 
 // ParseNewCase extracts NewArgs from an irhub_new submission.
-// fieldErrors maps block IDs to user-facing messages and is
-// non-empty for input the user must fix (title empty); err reports
-// structural problems.
-func ParseNewCase(view slack.View) (args command.NewArgs, meta Metadata, fieldErrors map[string]string, err error) {
+// fieldErrors maps block IDs to user-facing messages (in the
+// catalog's language) and is non-empty for input the user must fix
+// (title empty); err reports structural problems.
+func ParseNewCase(view slack.View, cat *msg.Catalog) (args command.NewArgs, meta Metadata, fieldErrors map[string]string, err error) {
 	meta, err = decodeMeta(view.PrivateMetadata)
 	if err != nil {
 		return command.NewArgs{}, Metadata{}, nil, err
@@ -166,7 +167,7 @@ func ParseNewCase(view slack.View) (args command.NewArgs, meta Metadata, fieldEr
 
 	args.Title = strings.TrimSpace(stateValue(view, blockTitle).Value)
 	if args.Title == "" {
-		return command.NewArgs{}, meta, map[string]string{blockTitle: "Title must not be empty"}, nil
+		return command.NewArgs{}, meta, map[string]string{blockTitle: cat.ModalTitleEmpty}, nil
 	}
 
 	args.Severity = stateValue(view, blockSeverity).SelectedOption.Value

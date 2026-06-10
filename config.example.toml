@@ -14,6 +14,10 @@
 #   chmod 600 ~/.config/ir-hub/config.toml
 # ir-hub warns at startup when the file is group/other readable.
 
+# UI language for everything Slack users see (modals, posts,
+# errors): "en" or "ja". Logs stay English.
+language = "en"
+
 [gcp]
 project  = "your-project-id"
 location = "us-central1"

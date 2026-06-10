@@ -35,6 +35,10 @@ const (
 // sections are loaded and validated from Phase 1 on, but only
 // consumed by the LLM / export features of later phases.
 type Config struct {
+	// Language selects the UI language for everything Slack users
+	// see (modals, posts, errors): "en" or "ja". Logs stay English.
+	Language string `toml:"language"`
+
 	GCP     GCPConfig     `toml:"gcp"`
 	Model   ModelConfig   `toml:"model"`
 	Channel ChannelConfig `toml:"channel"`
@@ -103,6 +107,7 @@ func DefaultPath() string {
 func defaults() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
+		Language: "en",
 		GCP:     GCPConfig{Location: DefaultLocation},
 		Model:   ModelConfig{Name: DefaultModel},
 		Channel: ChannelConfig{DefaultVisibility: DefaultVisibility, NamePrefix: DefaultNamePrefix},
@@ -167,6 +172,7 @@ func applyEnvOverrides(cfg *Config) {
 		}
 	}
 
+	setStr(&cfg.Language, "IRHUB_LANGUAGE")
 	setStr(&cfg.GCP.Project, "IRHUB_GCP_PROJECT")
 	setStr(&cfg.GCP.Location, "IRHUB_GCP_LOCATION")
 	setStr(&cfg.Model.Name, "IRHUB_MODEL_NAME")
@@ -232,6 +238,11 @@ func expandDBPath(cfg *Config) {
 var namePrefixRe = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 func (c *Config) validate() error {
+	switch c.Language {
+	case "en", "ja":
+	default:
+		return fmt.Errorf("language must be \"en\" or \"ja\", got %q", c.Language)
+	}
 	switch c.Channel.DefaultVisibility {
 	case "public", "private":
 	default:

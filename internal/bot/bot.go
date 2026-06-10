@@ -7,8 +7,9 @@ package bot
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/nlink-jp/ir-hub/internal/command"
 	"github.com/nlink-jp/ir-hub/internal/ingest"
 	"github.com/nlink-jp/ir-hub/internal/modal"
+	"github.com/nlink-jp/ir-hub/internal/msg"
 	"github.com/nlink-jp/ir-hub/internal/slackapi"
 	"github.com/nlink-jp/ir-hub/internal/store"
 )
@@ -38,6 +40,8 @@ type Config struct {
 	NotifyDenied bool
 	// MaxConcurrent bounds dispatched background work.
 	MaxConcurrent int
+	// Msg is the user-facing message catalog; nil means English.
+	Msg *msg.Catalog
 }
 
 // Bot wires the event loop to the services.
@@ -76,6 +80,9 @@ func New(socket Socket, api slackapi.API, st *store.Store, checker *acl.Checker,
 	caseSvc *cases.Service, ing *ingest.Ingester, cfg Config, opts ...Option) *Bot {
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = defaultMaxConcurrent
+	}
+	if cfg.Msg == nil {
+		cfg.Msg = &msg.EN
 	}
 	b := &Bot{
 		socket: socket,
@@ -230,16 +237,16 @@ func (b *Bot) handleSlash(ctx context.Context, cmd slack.SlashCommand) {
 
 	parsed, err := command.Parse(cmd.Text)
 	if err != nil {
-		b.respond(ctx, cmd.ResponseURL, ":warning: "+err.Error())
+		b.respond(ctx, cmd.ResponseURL, ":warning: "+b.parseErrText(err))
 		return
 	}
 
 	switch parsed.Sub {
 	case "":
-		view := modal.BuildActionPicker(modal.Metadata{ChannelID: cmd.ChannelID, UserID: cmd.UserID})
+		view := modal.BuildActionPicker(modal.Metadata{ChannelID: cmd.ChannelID, UserID: cmd.UserID}, b.cfg.Msg)
 		if err := b.api.OpenView(ctx, cmd.TriggerID, view); err != nil {
 			b.logf("bot: open action picker: %v", err)
-			b.respond(ctx, cmd.ResponseURL, ":warning: could not open the dialog, please retry")
+			b.respond(ctx, cmd.ResponseURL, b.cfg.Msg.ModalOpenFailed)
 		}
 	case "new":
 		b.runNew(ctx, *parsed.New, cmd.UserID, cmd.ResponseURL)
@@ -289,7 +296,7 @@ func (b *Bot) handleInteractive(ctx context.Context, req socketmode.Request, cb 
 		}
 		switch action {
 		case modal.ActionNew:
-			next := modal.BuildNewCase(meta, b.cfg.DefaultVisibility)
+			next := modal.BuildNewCase(meta, b.cfg.DefaultVisibility, b.cfg.Msg)
 			// Synchronous response: push the parameter form.
 			b.socket.Ack(req, slack.NewPushViewSubmissionResponse(&next))
 		case modal.ActionClose:
@@ -301,7 +308,7 @@ func (b *Bot) handleInteractive(ctx context.Context, req socketmode.Request, cb 
 		}
 
 	case modal.CallbackNew:
-		args, meta, fieldErrs, err := modal.ParseNewCase(cb.View)
+		args, meta, fieldErrs, err := modal.ParseNewCase(cb.View, b.cfg.Msg)
 		if err != nil {
 			b.socket.Ack(req)
 			b.logf("bot: parse new-case submission: %v", err)
@@ -348,15 +355,56 @@ func (b *Bot) handleEventsAPI(ctx context.Context, ev slackevents.EventsAPIEvent
 			return
 		}
 		// Knowledge Q&A arrives with Phase 3; acknowledge politely.
-		if err := b.api.PostEphemeral(ctx, inner.Channel, inner.User, slack.MsgOptionText(
-			"Knowledge Q&A is not available yet (coming in a later phase). "+
-				"Use `/ir-hub status` for the current case state.", false)); err != nil {
+		if err := b.api.PostEphemeral(ctx, inner.Channel, inner.User,
+			slack.MsgOptionText(b.cfg.Msg.MentionNotReady, false)); err != nil {
 			b.logf("bot: mention reply: %v", err)
 		}
 	}
 }
 
 // ---- shared actions ----
+
+// parseErrText renders a command.ParseError in the configured UI
+// language; non-ParseErrors fall back to their English Error().
+func (b *Bot) parseErrText(err error) string {
+	var pe *command.ParseError
+	if !errors.As(err, &pe) {
+		return err.Error()
+	}
+	m := b.cfg.Msg
+	allowed := strings.Join(command.Severities, "|")
+	switch pe.Kind {
+	case command.ErrKindUnknownSubcommand:
+		return m.F(m.ErrUnknownSubcommand, pe.Arg)
+	case command.ErrKindTakesNoArgs:
+		return m.F(m.ErrTakesNoArgs, pe.Arg)
+	case command.ErrKindSeverityNeedsValue:
+		return m.F(m.ErrSeverityNeedsValue, allowed)
+	case command.ErrKindInvalidSeverity:
+		return m.F(m.ErrInvalidSeverity, pe.Arg, allowed)
+	case command.ErrKindTitleRequired:
+		return m.ErrTitleRequired
+	case command.ErrKindVisibilityConflict:
+		return m.ErrVisibilityConflict
+	case command.ErrKindUnknownFlag:
+		return m.F(m.ErrUnknownFlag, pe.Arg)
+	default:
+		return err.Error()
+	}
+}
+
+// caseErrText localizes the user-actionable case errors; everything
+// else keeps its English Error() (system failures aimed at logs).
+func (b *Bot) caseErrText(err error) string {
+	switch {
+	case errors.Is(err, cases.ErrNotCaseChannel):
+		return b.cfg.Msg.ErrNotCaseChannel
+	case errors.Is(err, store.ErrNotOpen):
+		return b.cfg.Msg.ErrCaseNotOpen
+	default:
+		return err.Error()
+	}
+}
 
 func (b *Bot) runNew(ctx context.Context, args command.NewArgs, userID, responseURL string) {
 	res, err := b.cases.NewCase(ctx, cases.NewRequest{
@@ -367,10 +415,10 @@ func (b *Bot) runNew(ctx context.Context, args command.NewArgs, userID, response
 	})
 	if err != nil {
 		b.logf("bot: new case: %v", err)
-		b.respond(ctx, responseURL, fmt.Sprintf(":warning: could not open the case: %v", err))
+		b.respond(ctx, responseURL, b.cfg.Msg.F(b.cfg.Msg.CaseOpenFailed, err))
 		return
 	}
-	text := fmt.Sprintf(":white_check_mark: Case #%04d opened: <#%s>", res.Case.ID, res.Case.ChannelID)
+	text := b.cfg.Msg.F(b.cfg.Msg.CaseOpenedNotice, res.Case.ID, res.Case.ChannelID)
 	for _, w := range res.Warnings {
 		text += "\n:warning: " + w
 	}
@@ -379,7 +427,8 @@ func (b *Bot) runNew(ctx context.Context, args command.NewArgs, userID, response
 
 func (b *Bot) runClose(ctx context.Context, channelID, userID, responseURL string) {
 	if _, err := b.cases.Close(ctx, channelID, userID); err != nil {
-		b.userError(ctx, channelID, userID, responseURL, fmt.Sprintf(":warning: close: %v", err))
+		b.userError(ctx, channelID, userID, responseURL,
+			b.cfg.Msg.F(b.cfg.Msg.CloseFailed, b.caseErrText(err)))
 		return
 	}
 	// Success is announced by the closing message Close() posts.
@@ -388,7 +437,8 @@ func (b *Bot) runClose(ctx context.Context, channelID, userID, responseURL strin
 func (b *Bot) runStatus(ctx context.Context, channelID, userID, responseURL string) {
 	text, err := b.cases.Status(ctx, channelID)
 	if err != nil {
-		b.userError(ctx, channelID, userID, responseURL, fmt.Sprintf(":warning: status: %v", err))
+		b.userError(ctx, channelID, userID, responseURL,
+			b.cfg.Msg.F(b.cfg.Msg.StatusFailed, b.caseErrText(err)))
 		return
 	}
 	b.userError(ctx, channelID, userID, responseURL, text)
@@ -428,11 +478,11 @@ func (b *Bot) deny(ctx context.Context, d store.Denial, responseURL string) {
 	if !b.cfg.NotifyDenied {
 		return
 	}
-	msg := "You are not authorized to use ir-hub. Contact the IR team if you believe this is a mistake."
+	notice := b.cfg.Msg.DeniedNotice
 	if responseURL != "" {
-		b.respond(ctx, responseURL, msg)
+		b.respond(ctx, responseURL, notice)
 	} else if d.ChannelID != "" {
-		if err := b.api.PostEphemeral(ctx, d.ChannelID, d.UserID, slack.MsgOptionText(msg, false)); err != nil {
+		if err := b.api.PostEphemeral(ctx, d.ChannelID, d.UserID, slack.MsgOptionText(notice, false)); err != nil {
 			b.logf("bot: notify denied: %v", err)
 		}
 	}
