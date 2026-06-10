@@ -61,13 +61,13 @@ type Catalog struct {
 	DurationLessThanMinute string
 
 	// Bot replies.
-	CaseOpenedNotice string // %04d case id, %s channel id
-	CaseOpenFailed   string // %v error
-	ModalOpenFailed  string
-	DeniedNotice     string
-	MentionNotReady  string
-	CloseFailed      string // %v error (already localized where possible)
-	StatusFailed     string // %v error
+	CaseOpenedNotice  string // %04d case id, %s channel id
+	CaseOpenFailed    string // %v error
+	ModalOpenFailed   string
+	DeniedNotice      string
+	MentionNotReady   string
+	CloseFailed       string // %v error (already localized where possible)
+	StatusFailed      string // %v error
 	ErrNotCaseChannel string
 	ErrCaseNotOpen    string
 
@@ -79,6 +79,26 @@ type Catalog struct {
 	ErrTitleRequired      string
 	ErrVisibilityConflict string
 	ErrUnknownFlag        string // %s flag
+
+	// Postmortem report rendering (Markdown).
+	RptTitle         string // %04d case id, %s title
+	RptSummary       string
+	RptTimeline      string
+	RptRootCause     string
+	RptResolution    string
+	RptReview        string
+	RptScore         string // %d score (1-10)
+	RptPhases        string
+	RptCommunication string
+	RptRoleClarity   string
+	RptTools         string
+	RptStrengths     string
+	RptImprovements  string
+	RptChecklist     string
+	RptActivity      string
+	RptRoles         string
+	RptTactics       string
+	RptTruncated     string // %d analyzed, %d total
 }
 
 // For returns the catalog for a language ("ja" → JA, anything else
@@ -156,6 +176,25 @@ var EN = Catalog{
 	ErrTitleRequired:      "new requires a title: /ir-hub new <title> [--severity <lv>] [--private|--public]",
 	ErrVisibilityConflict: "--private and --public are mutually exclusive",
 	ErrUnknownFlag:        "unknown flag %q",
+
+	RptTitle:         "# Postmortem: Case #%04d — %s",
+	RptSummary:       "## Summary",
+	RptTimeline:      "## Timeline",
+	RptRootCause:     "## Root cause",
+	RptResolution:    "## Resolution",
+	RptReview:        "## Process review",
+	RptScore:         "Overall score: %d/10",
+	RptPhases:        "Phases",
+	RptCommunication: "Communication",
+	RptRoleClarity:   "Role clarity",
+	RptTools:         "Tool appropriateness",
+	RptStrengths:     "Strengths",
+	RptImprovements:  "Improvements",
+	RptChecklist:     "Next-incident checklist",
+	RptActivity:      "## Participant activity",
+	RptRoles:         "## Roles",
+	RptTactics:       "## Extracted tactics",
+	RptTruncated:     "_Note: the analysis covered the newest %d of %d messages._",
 }
 
 var JA = Catalog{
@@ -218,4 +257,23 @@ var JA = Catalog{
 	ErrTitleRequired:      "new にはタイトルが必要です: /ir-hub new <タイトル> [--severity <lv>] [--private|--public]",
 	ErrVisibilityConflict: "--private と --public は同時に指定できません",
 	ErrUnknownFlag:        "未知のフラグ %q です",
+
+	RptTitle:         "# ポストモーテム: 案件 #%04d — %s",
+	RptSummary:       "## サマリ",
+	RptTimeline:      "## タイムライン",
+	RptRootCause:     "## 根本原因",
+	RptResolution:    "## 対応・解決",
+	RptReview:        "## プロセス評価",
+	RptScore:         "総合スコア: %d/10",
+	RptPhases:        "フェーズ",
+	RptCommunication: "コミュニケーション",
+	RptRoleClarity:   "ロールの明確さ",
+	RptTools:         "ツール適切性",
+	RptStrengths:     "良かった点",
+	RptImprovements:  "改善点",
+	RptChecklist:     "次回への準備チェックリスト",
+	RptActivity:      "## 参加者アクティビティ",
+	RptRoles:         "## ロール",
+	RptTactics:       "## 抽出タクティック",
+	RptTruncated:     "_注: 分析対象は新しい %d 件のメッセージです(全 %d 件中)。_",
 }
