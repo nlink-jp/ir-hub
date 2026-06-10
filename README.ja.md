@@ -113,12 +113,17 @@ make build          # → dist/ir-hub
 (例: `IRHUB_ACL_ALLOW_GROUPS=ir-team,secops`)。設定ファイル内の未知の
 キーはエラーになるため、typo は即座に検出されます。
 
-Slack トークンは**環境変数のみ**で、設定ファイルに書くとエラーになります:
+Slack トークンは設定ファイルの `[slack]` セクションまたは環境変数で
+指定します(環境変数が優先):
 
 | 環境変数 | 説明 |
 |---|---|
 | `IRHUB_SLACK_APP_TOKEN` | App-level トークン(`xapp-…`、`connections:write`) |
 | `IRHUB_SLACK_BOT_TOKEN` | Bot トークン(`xoxb-…`) |
+
+トークンをファイルに書く場合は `chmod 600` で保護してください。
+group/other に読めるパーミッションの場合、ir-hub は起動時に警告を
+表示します。
 
 **ACL はデフォルト全拒否**です。`allow_users` / `allow_groups` が未設定の
 場合、すべてのコマンドとメンションは拒否され(監査ログに記録)、起動前に

@@ -67,8 +67,10 @@ backends).
 Sections in `config.example.toml`: `[gcp]` + `[model]` (org-standard
 Vertex AI pattern), `[channel]` (visibility default, name prefix),
 `[acl]` (allow/deny users + User Groups, cache TTL, notify_denied),
-`[storage]` (local | gcs | s3), `[db]` (SQLite path). Env-var
-overrides use the `IRHUB_*` prefix; Slack tokens are env-var only.
+`[storage]` (local | gcs | s3), `[db]` (SQLite path), `[slack]`
+(tokens; optional — env wins). Env-var overrides use the `IRHUB_*`
+prefix. Load warns when the config file is group/other readable
+(`cfg.Warnings`, printed by serve).
 
 ## Coding rules
 

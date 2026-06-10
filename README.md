@@ -118,13 +118,16 @@ field can be overridden with `IRHUB_*` environment variables
 (e.g. `IRHUB_ACL_ALLOW_GROUPS=ir-team,secops`). Unknown keys in the
 file are an error, so typos fail fast.
 
-Slack tokens are **environment-only** and rejected if found in the
-config file:
+Slack tokens go in the `[slack]` section of the config file or in
+the environment (environment wins):
 
 | Variable | Description |
 |---|---|
 | `IRHUB_SLACK_APP_TOKEN` | App-level token (`xapp-…`, `connections:write`) |
 | `IRHUB_SLACK_BOT_TOKEN` | Bot token (`xoxb-…`) |
+
+When tokens live in the file, keep it private (`chmod 600`); ir-hub
+prints a warning at startup if the file is group/other readable.
 
 **ACL is deny-by-default**: with no `allow_users` / `allow_groups`
 configured, every command and mention is denied (and audit-logged).

@@ -41,10 +41,11 @@ type Config struct {
 	ACL     ACLConfig     `toml:"acl"`
 	Storage StorageConfig `toml:"storage"`
 	DB      DBConfig      `toml:"db"`
+	Slack   SlackConfig   `toml:"slack"`
 
-	// Slack tokens are environment-only. A [slack] section in the
-	// TOML file is rejected by strict decoding.
-	Slack SlackConfig `toml:"-"`
+	// Warnings collects non-fatal findings from Load (e.g. insecure
+	// config-file permissions). The caller decides where to print.
+	Warnings []string `toml:"-"`
 }
 
 type GCPConfig struct {
@@ -82,9 +83,12 @@ type DBConfig struct {
 	Path string `toml:"path"`
 }
 
+// SlackConfig holds the Slack tokens. They may live in the config
+// file (which should then be chmod 600 — Load warns otherwise) or
+// in the environment; IRHUB_SLACK_*_TOKEN overrides the file.
 type SlackConfig struct {
-	AppToken string
-	BotToken string
+	AppToken string `toml:"app_token"`
+	BotToken string `toml:"bot_token"`
 }
 
 // DefaultPath returns the default config file location.
@@ -117,7 +121,15 @@ func Load(path string) (*Config, error) {
 	if path == "" {
 		path = DefaultPath()
 	}
-	if _, err := os.Stat(path); err == nil {
+	if info, err := os.Stat(path); err == nil {
+		// The file may contain credentials ([slack] tokens): warn
+		// when group/other can read it (org convention).
+		if perm := info.Mode().Perm(); perm&0o077 != 0 {
+			cfg.Warnings = append(cfg.Warnings, fmt.Sprintf(
+				"Warning: config file %s has permissions %04o; expected 0600.\n"+
+					"  The file may contain credentials. Run: chmod 600 %s",
+				path, perm, path))
+		}
 		md, err := toml.DecodeFile(path, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("parse config %s: %w", path, err)
@@ -127,7 +139,7 @@ func Load(path string) (*Config, error) {
 			for i, k := range undecoded {
 				keys[i] = k.String()
 			}
-			return nil, fmt.Errorf("config %s: unknown keys (typo? Slack tokens are env-only): %s",
+			return nil, fmt.Errorf("config %s: unknown keys (typo?): %s",
 				path, strings.Join(keys, ", "))
 		}
 	} else if !os.IsNotExist(err) {

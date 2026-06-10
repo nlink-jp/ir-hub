@@ -40,11 +40,13 @@ make build-all      # cross-compile 5 platforms
 Settings load order: built-in defaults → TOML file → env vars → CLI flags.
 
 - **Config file**: `~/.config/ir-hub/config.toml` (or flag)
-- **Env vars**: `IRHUB_*`; Slack tokens are env-var only
-  (`IRHUB_SLACK_APP_TOKEN`, `IRHUB_SLACK_BOT_TOKEN`)
+- **Env vars**: `IRHUB_*`; Slack tokens via `[slack]` in the file or
+  `IRHUB_SLACK_APP_TOKEN` / `IRHUB_SLACK_BOT_TOKEN` (env wins).
+  Load warns when the file is group/other readable (perm & 0077),
+  per the org Authentication convention — never remove that check.
 
 Schema: see `config.example.toml` — sections `[gcp]`, `[model]`,
-`[channel]`, `[acl]`, `[storage]`, `[db]`.
+`[channel]`, `[acl]`, `[storage]`, `[db]`, `[slack]`.
 
 ## Key dependencies
 

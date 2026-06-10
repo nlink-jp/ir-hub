@@ -43,6 +43,9 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	for _, w := range cfg.Warnings {
+		fmt.Fprintln(cmd.ErrOrStderr(), w)
+	}
 	if err := cfg.ValidateServe(); err != nil {
 		return err
 	}

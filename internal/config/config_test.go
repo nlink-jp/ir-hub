@@ -111,14 +111,74 @@ default_visibilty = "public"
 	}
 }
 
-func TestLoadSlackSectionInTOMLFails(t *testing.T) {
+func TestLoadSlackTokensFromTOML(t *testing.T) {
 	clearEnv(t)
 	path := writeConfig(t, `
 [slack]
-bot_token = "EXAMPLE-NOT-A-TOKEN"
+app_token = "xapp-1-EXAMPLE"
+bot_token = "xoxb-EXAMPLE"
 `)
-	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "unknown keys") {
-		t.Errorf("Load with [slack] in TOML: err = %v, want unknown-keys error", err)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Slack.AppToken != "xapp-1-EXAMPLE" || cfg.Slack.BotToken != "xoxb-EXAMPLE" {
+		t.Errorf("Slack = %+v, want tokens from TOML", cfg.Slack)
+	}
+	if err := cfg.ValidateServe(); err != nil {
+		t.Errorf("ValidateServe with TOML tokens: %v", err)
+	}
+	// 0600 file: no permission warning.
+	if len(cfg.Warnings) != 0 {
+		t.Errorf("Warnings = %v, want none for 0600", cfg.Warnings)
+	}
+}
+
+func TestEnvTokenBeatsTOML(t *testing.T) {
+	clearEnv(t)
+	path := writeConfig(t, `
+[slack]
+app_token = "xapp-1-FROMFILE"
+bot_token = "xoxb-FROMFILE"
+`)
+	t.Setenv("IRHUB_SLACK_BOT_TOKEN", "xoxb-FROMENV")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Slack.BotToken != "xoxb-FROMENV" {
+		t.Errorf("BotToken = %q, want env override", cfg.Slack.BotToken)
+	}
+	if cfg.Slack.AppToken != "xapp-1-FROMFILE" {
+		t.Errorf("AppToken = %q, want file value kept", cfg.Slack.AppToken)
+	}
+}
+
+func TestLoosePermissionsWarn(t *testing.T) {
+	clearEnv(t)
+	path := writeConfig(t, `
+[channel]
+default_visibility = "public"
+`)
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Warnings) != 1 {
+		t.Fatalf("Warnings = %v, want exactly one", cfg.Warnings)
+	}
+	w := cfg.Warnings[0]
+	for _, want := range []string{"0644", "expected 0600", "chmod 600 " + path} {
+		if !strings.Contains(w, want) {
+			t.Errorf("warning missing %q:\n%s", want, w)
+		}
+	}
+	// Loose permissions warn but never fail the load.
+	if cfg.Channel.DefaultVisibility != "public" {
+		t.Errorf("config not loaded alongside warning")
 	}
 }
 

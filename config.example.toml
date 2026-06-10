@@ -2,11 +2,17 @@
 #
 # Copy to ~/.config/ir-hub/config.toml and edit, or override any
 # field via IRHUB_* environment variables (see README for the
-# precedence order). Slack tokens are NEVER set in this file —
-# provide them via environment variables only:
+# precedence order).
+#
+# Slack tokens may be set in the [slack] section below or via
+# environment variables (env wins):
 #
 #   IRHUB_SLACK_APP_TOKEN  app-level token (connections:write, "xapp-...")
 #   IRHUB_SLACK_BOT_TOKEN  bot token ("xoxb-...")
+#
+# If you put tokens in this file, keep it private:
+#   chmod 600 ~/.config/ir-hub/config.toml
+# ir-hub warns at startup when the file is group/other readable.
 
 [gcp]
 project  = "your-project-id"
@@ -53,3 +59,9 @@ local_path = "./knowledge"
 # Embedded SQLite database holding runtime state (case metadata,
 # ingested messages, analysis results, knowledge index).
 path = "~/.local/share/ir-hub/ir-hub.db"
+
+[slack]
+# Optional: tokens may live here instead of the environment.
+# chmod 600 this file if you uncomment these.
+# app_token = "xapp-REPLACE-ME"
+# bot_token = "xoxb-REPLACE-ME"
