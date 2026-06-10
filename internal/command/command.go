@@ -43,6 +43,49 @@ type Parsed struct {
 	New *NewArgs
 }
 
+// ErrorKind identifies a parse failure so callers can render it in
+// the user's language; Error() stays English for logs.
+type ErrorKind int
+
+const (
+	ErrKindUnknownSubcommand ErrorKind = iota + 1
+	ErrKindTakesNoArgs
+	ErrKindSeverityNeedsValue
+	ErrKindInvalidSeverity
+	ErrKindTitleRequired
+	ErrKindVisibilityConflict
+	ErrKindUnknownFlag
+)
+
+// ParseError is the only error type Parse returns.
+type ParseError struct {
+	Kind ErrorKind
+	// Arg carries the offending token where applicable (subcommand,
+	// severity value, or flag).
+	Arg string
+}
+
+func (e *ParseError) Error() string {
+	switch e.Kind {
+	case ErrKindUnknownSubcommand:
+		return fmt.Sprintf("unknown subcommand %q (expected: new, close, status)", e.Arg)
+	case ErrKindTakesNoArgs:
+		return fmt.Sprintf("%q takes no arguments", e.Arg)
+	case ErrKindSeverityNeedsValue:
+		return fmt.Sprintf("--severity requires a value (%s)", strings.Join(Severities, "|"))
+	case ErrKindInvalidSeverity:
+		return fmt.Sprintf("invalid severity %q (expected: %s)", e.Arg, strings.Join(Severities, "|"))
+	case ErrKindTitleRequired:
+		return "new requires a title: /ir-hub new <title> [--severity <lv>] [--private|--public]"
+	case ErrKindVisibilityConflict:
+		return "--private and --public are mutually exclusive"
+	case ErrKindUnknownFlag:
+		return fmt.Sprintf("unknown flag %q", e.Arg)
+	default:
+		return "invalid command"
+	}
+}
+
 // Parse parses the text following /ir-hub.
 func Parse(text string) (Parsed, error) {
 	fields := strings.Fields(text)
@@ -60,11 +103,11 @@ func Parse(text string) (Parsed, error) {
 		return Parsed{Sub: "new", New: args}, nil
 	case "close", "status":
 		if len(rest) > 0 {
-			return Parsed{}, fmt.Errorf("%q takes no arguments", sub)
+			return Parsed{}, &ParseError{Kind: ErrKindTakesNoArgs, Arg: sub}
 		}
 		return Parsed{Sub: sub}, nil
 	default:
-		return Parsed{}, fmt.Errorf("unknown subcommand %q (expected: new, close, status)", sub)
+		return Parsed{}, &ParseError{Kind: ErrKindUnknownSubcommand, Arg: sub}
 	}
 }
 
@@ -76,32 +119,32 @@ func parseNew(fields []string) (*NewArgs, error) {
 		switch {
 		case f == "--severity":
 			if i+1 >= len(fields) {
-				return nil, fmt.Errorf("--severity requires a value (%s)", strings.Join(Severities, "|"))
+				return nil, &ParseError{Kind: ErrKindSeverityNeedsValue}
 			}
 			i++
 			if !validSeverity(fields[i]) {
-				return nil, fmt.Errorf("invalid severity %q (expected: %s)", fields[i], strings.Join(Severities, "|"))
+				return nil, &ParseError{Kind: ErrKindInvalidSeverity, Arg: fields[i]}
 			}
 			args.Severity = fields[i]
 		case f == "--private":
 			if args.Visibility == VisibilityPublic {
-				return nil, fmt.Errorf("--private and --public are mutually exclusive")
+				return nil, &ParseError{Kind: ErrKindVisibilityConflict}
 			}
 			args.Visibility = VisibilityPrivate
 		case f == "--public":
 			if args.Visibility == VisibilityPrivate {
-				return nil, fmt.Errorf("--private and --public are mutually exclusive")
+				return nil, &ParseError{Kind: ErrKindVisibilityConflict}
 			}
 			args.Visibility = VisibilityPublic
 		case strings.HasPrefix(f, "--"):
-			return nil, fmt.Errorf("unknown flag %q", f)
+			return nil, &ParseError{Kind: ErrKindUnknownFlag, Arg: f}
 		default:
 			title = append(title, f)
 		}
 	}
 	args.Title = strings.Join(title, " ")
 	if args.Title == "" {
-		return nil, fmt.Errorf("new requires a title: /ir-hub new <title> [--severity <lv>] [--private|--public]")
+		return nil, &ParseError{Kind: ErrKindTitleRequired}
 	}
 	return args, nil
 }
