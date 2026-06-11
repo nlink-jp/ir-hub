@@ -15,6 +15,7 @@ import (
 	"github.com/nlink-jp/ir-hub/internal/msg"
 	"github.com/nlink-jp/ir-hub/internal/slackapi/slackapitest"
 	"github.com/nlink-jp/ir-hub/internal/store"
+	"github.com/nlink-jp/ir-hub/internal/userdir"
 )
 
 var fixedNow = time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
@@ -243,8 +244,39 @@ func TestStatus(t *testing.T) {
 		}
 	}
 
+	// No resolver: opener shows as the raw ID.
+	if !strings.Contains(text, "by U1") {
+		t.Errorf("Status without resolver should show raw ID:\n%s", text)
+	}
+
 	if _, err := svc.Status(context.Background(), "CRANDOM"); !errors.Is(err, ErrNotCaseChannel) {
 		t.Errorf("err = %v, want ErrNotCaseChannel", err)
+	}
+}
+
+func TestStatusResolvesUserNames(t *testing.T) {
+	fake := &slackapitest.Fake{
+		GetUserInfoFn: func(ctx context.Context, id string) (*slack.User, error) {
+			return &slack.User{ID: id, RealName: "Alice"}, nil
+		},
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"),
+		store.WithClock(func() time.Time { return fixedNow }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	svc := New(fake, st, defaultCfg(),
+		WithClock(func() time.Time { return fixedNow.Add(90 * time.Minute) }),
+		WithResolver(userdir.New(fake)))
+	res, _ := svc.NewCase(context.Background(), NewRequest{Title: "t", Severity: "high", OpenedBy: "U1"})
+
+	text, err := svc.Status(context.Background(), res.Case.ChannelID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "Alice (U1)") {
+		t.Errorf("Status should resolve opener to name (ID):\n%s", text)
 	}
 }
 

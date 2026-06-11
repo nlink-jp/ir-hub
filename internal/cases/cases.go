@@ -18,6 +18,7 @@ import (
 	"github.com/nlink-jp/ir-hub/internal/msg"
 	"github.com/nlink-jp/ir-hub/internal/slackapi"
 	"github.com/nlink-jp/ir-hub/internal/store"
+	"github.com/nlink-jp/ir-hub/internal/userdir"
 )
 
 // ErrNotCaseChannel is returned when close/status runs in a channel
@@ -34,10 +35,11 @@ type Config struct {
 
 // Service implements the case lifecycle.
 type Service struct {
-	api   slackapi.API
-	store *store.Store
-	cfg   Config
-	now   func() time.Time
+	api      slackapi.API
+	store    *store.Store
+	cfg      Config
+	now      func() time.Time
+	resolver *userdir.Resolver
 }
 
 // Option configures a Service.
@@ -46,6 +48,12 @@ type Option func(*Service)
 // WithClock injects a deterministic clock for tests.
 func WithClock(now func() time.Time) Option {
 	return func(s *Service) { s.now = now }
+}
+
+// WithResolver injects a user-ID → display-name resolver for the
+// status metadata. Without it, status shows raw IDs.
+func WithResolver(res *userdir.Resolver) Option {
+	return func(s *Service) { s.resolver = res }
 }
 
 // New creates a Service.
@@ -200,11 +208,11 @@ func (s *Service) Status(ctx context.Context, channelID string) (string, error) 
 		m.F(m.StatusHeader, c.ID, c.Title),
 		m.F(m.StatusState, c.State),
 		m.F(m.StatusSeverity, c.Severity),
-		m.F(m.StatusOpened, c.OpenedAt.UTC().Format("2006-01-02 15:04 MST"), c.OpenedBy),
+		m.F(m.StatusOpened, c.OpenedAt.UTC().Format("2006-01-02 15:04 MST"), s.resolver.Resolve(ctx, c.OpenedBy)),
 	}
 	if c.State == store.StateClosed {
 		lines = append(lines,
-			m.F(m.StatusClosed, c.ClosedAt.UTC().Format("2006-01-02 15:04 MST"), c.ClosedBy),
+			m.F(m.StatusClosed, c.ClosedAt.UTC().Format("2006-01-02 15:04 MST"), s.resolver.Resolve(ctx, c.ClosedBy)),
 			m.F(m.StatusDuration, formatDuration(c.ClosedAt.Sub(c.OpenedAt), m)))
 	} else {
 		lines = append(lines, m.F(m.StatusOpenFor, formatDuration(s.now().Sub(c.OpenedAt), m)))
