@@ -206,9 +206,38 @@ Keep it short (aim for under 15 lines of Slack mrkdwn, using *bold* section labe
 Respond in %s.`
 
 func statusBody(language string) string {
-	name := "English"
+	return fmt.Sprintf(statusBodyTemplate, languageDisplayName(language))
+}
+
+func languageDisplayName(language string) string {
 	if language == "ja" {
-		name = "Japanese"
+		return "Japanese"
 	}
-	return fmt.Sprintf(statusBodyTemplate, name)
+	return "English"
+}
+
+// answerBody is the knowledge Q&A prompt (non-canonical, replies in
+// the configured language).
+const answerBodyTemplate = `You are an incident-response knowledge assistant.
+Answer the QUESTION using ONLY the KNOWLEDGE documents (and CASE CONTEXT, if any) below.
+- Cite the tactic IDs (tac-...) you drew from.
+- If the knowledge does not cover the question, say so plainly — do not invent tactics.
+- Be concise: aim for under 15 lines of Slack mrkdwn.
+Respond in %s.`
+
+func answerBody(language string) string {
+	return fmt.Sprintf(answerBodyTemplate, languageDisplayName(language))
+}
+
+// briefingBody is the new-case initial briefing prompt.
+const briefingBodyTemplate = `You are an incident-response knowledge assistant.
+A new incident case was just opened — TITLE: %q, SEVERITY: %s.
+From the KNOWLEDGE summaries below, select the FEW most relevant past tactics for this
+new case and produce a short briefing: which past knowledge applies and why, citing
+tactic IDs (tac-...). If none are clearly relevant, reply with exactly the single word
+NONE and nothing else.
+Keep it short (under 12 lines of Slack mrkdwn). Respond in %s.`
+
+func briefingBody(language, title, severity string) string {
+	return fmt.Sprintf(briefingBodyTemplate, title, severity, languageDisplayName(language))
 }
