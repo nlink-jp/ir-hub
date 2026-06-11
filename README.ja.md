@@ -203,6 +203,12 @@ ir-hub serve
 Bot は自動再接続し、再接続後は `conversations.history` から取りこぼしを
 backfill します。
 
+> **単一インスタンスを永続ストレージ上で動かす。** ir-hub は Socket
+> Mode(単一 WebSocket — 2 つ起動すると全イベントが二重化)と、実
+> ローカル FS の永続ディスクに置くべき内蔵 SQLite を使います。小さな
+> 常時起動 VM が推奨ホストで、エフェメラル FS のコンテナ(Cloud Run)は
+> DB を消去します。[デプロイガイド](docs/ja/deployment.ja.md)を参照。
+
 ## 知見エクスポート
 
 `[storage]` でバックエンドを設定します。知見ドキュメントは
@@ -255,6 +261,8 @@ make package        # リリース zip; darwin は署名+notarize
 
 ## ドキュメント
 
+- [デプロイガイド](docs/ja/deployment.ja.md) /
+  [English](docs/en/deployment.md)
 - [Slack アプリ構成ハンドブック](docs/ja/slack-app-setup.ja.md) /
   [English](docs/en/slack-app-setup.md)
 - [RFP(承認済み設計)](docs/ja/ir-hub-rfp.ja.md) /

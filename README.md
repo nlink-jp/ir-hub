@@ -211,6 +211,13 @@ ir-hub serve
 The bot reconnects automatically; after each reconnect it backfills
 missed messages from `conversations.history`.
 
+> **Run a single instance on durable storage.** ir-hub uses Socket
+> Mode (one WebSocket — two instances double every event) and an
+> embedded SQLite database that must live on a real, persistent
+> local filesystem. A small always-on VM is the recommended host;
+> ephemeral-FS containers (Cloud Run) would wipe the database. See
+> the [Deployment Guide](docs/en/deployment.md).
+
 ## Knowledge export
 
 Configure the storage backend in `[storage]`. Knowledge documents
@@ -264,6 +271,8 @@ make package        # release zips; darwin builds signed + notarized
 
 ## Documentation
 
+- [Deployment Guide](docs/en/deployment.md) /
+  [日本語](docs/ja/deployment.ja.md)
 - [Slack App Setup Handbook](docs/en/slack-app-setup.md) /
   [日本語](docs/ja/slack-app-setup.ja.md)
 - [RFP (approved design)](docs/en/ir-hub-rfp.md) /

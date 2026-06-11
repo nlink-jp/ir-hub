@@ -170,6 +170,12 @@ After Phase 3 completes:
   serve is logged and export is left disabled (nil Exporter); the
   bot still runs. Auto-export failure after a PM is logged only,
   never fails the postmortem.
+- **Single instance, durable local DB** — Socket Mode is one
+  WebSocket, so ir-hub must run as exactly one instance (two would
+  double every event). The SQLite DB needs a real persistent
+  filesystem; never an object-store mount (GCS FUSE / S3 corrupts
+  SQLite). Recommended host is an always-on VM, not an ephemeral-FS
+  container (Cloud Run). See `docs/en/deployment.md`.
 - **User-name resolution runs AFTER the LLM** — `userdir` resolves
   `display (ID)` post-analysis (in `analysis.resolveReport` and
   `cases.Status`). Never put names into a prompt. report.go renders

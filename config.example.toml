@@ -79,6 +79,10 @@ local_path = "./knowledge"
 [db]
 # Embedded SQLite database holding runtime state (case metadata,
 # ingested messages, analysis results, knowledge index).
+# Must be on a real, persistent local filesystem — NOT an object-store
+# mount (GCS FUSE / S3), which corrupts SQLite. On a VM, point this at
+# a persistent disk (e.g. /var/lib/ir-hub/ir-hub.db). See the
+# Deployment Guide (docs/en/deployment.md).
 path = "~/.local/share/ir-hub/ir-hub.db"
 
 [slack]

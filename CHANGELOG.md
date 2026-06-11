@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Docs
+
+- Deployment Guide (`docs/en/deployment.md` / `docs/ja/deployment.ja.md`):
+  ir-hub is single-instance (Socket Mode) with an embedded SQLite DB
+  that needs durable local storage. Documents the recommended GCE VM
+  + persistent disk setup (systemd unit, backups), why ephemeral-FS
+  containers (Cloud Run) don't fit, and the litestream escape hatch
+  if Cloud Run is mandatory. README/AGENTS/config note the
+  constraint.
+
 ## [0.3.0] - 2026-06-12
 
 ### Added
