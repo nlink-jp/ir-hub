@@ -10,169 +10,180 @@ Keep the current **Standalone Edition** (Socket Mode + embedded
 SQLite, runs on a VM) as-is, and add a **Serverless Edition** that
 runs scale-to-zero on Cloud Run so it costs almost nothing while
 idle — a good fit for ir-hub's low-frequency, incident-driven usage.
-Both editions are built from **one shared core**; only three I/O
-layers differ.
+Both editions are built from **one shared core**.
 
-## 2. The two editions
+## 2. Chosen approach: keep SQLite, replicate it, run on HTTP
+
+The key decision: **do not move off SQLite.** Instead, run a single
+Cloud Run instance, replicate the SQLite database to object storage
+with [litestream](https://litestream.io), and switch Slack transport
+to HTTP so the instance can scale to zero between events.
+
+This keeps SQLite's strengths and **sidesteps the three hard
+Firestore problems entirely** (see §6) — there is no `SearchKnowledge`
+LIKE rewrite, no `FinalizePMRun` transaction redesign, no
+AUTOINCREMENT replacement, and **the `store` package ports
+unchanged**. ir-hub's very low request rate and relaxed latency
+needs make the one cost of this approach — a cold-start database
+restore of a few seconds — acceptable.
 
 | | Standalone (current) | Serverless (proposed) |
 |---|---|---|
-| Slack transport | Socket Mode (WebSocket) | HTTP Events API + Interactivity + Slash (Request URLs) |
-| Database | embedded SQLite | Firestore (managed, serverless) |
-| Async work | in-process goroutines | Cloud Tasks → worker endpoint |
-| Host | always-on VM | Cloud Run (scale-to-zero) |
+| Slack transport | Socket Mode (WebSocket) | HTTP Events API + Interactivity + Slash |
+| Database | embedded SQLite | **embedded SQLite + litestream → GCS** |
+| Async work | in-process goroutines | Cloud Tasks → worker endpoint (same service) |
+| Host | always-on VM | Cloud Run, `max-instances=1`, scale-to-zero |
 | Scale-to-zero | no | **yes** (idle = \$0) |
-| Cost | ~VM (e.g. e2-micro) | ~hundreds of yen/mo, incident-driven |
-| Best for | simple, self-hosted, offline-ish | cheapest, GCP-native |
-
-The editions are not a fork: they share the same analysis, knowledge,
-ACL, and command logic. The difference is wiring, selected at build
-or config time.
 
 ## 3. Shared core (ports unchanged)
 
-These packages are pure logic or already interface-driven and move to
-the serverless edition without change:
-
+Pure-logic and interface-driven packages move over without change:
 `analysis`, `knowledge`, `acl`, `command`, `modal`, `defang`,
 `sanitize`, `msg`, `llm`, `userdir`, `channelname`, `storage`,
-`export`, plus the `slackapi.API` interface (all Web API calls are
-identical in both editions).
+`export`, the `slackapi.API` interface — **and crucially the entire
+`store` package** (SQLite stays).
 
-Critically, the bot's **handler functions are already
-transport-agnostic** — `runNew`, `runPM`, `runClose`, `runStatus`,
-`runQA`, `runExport`, `runReopen` all take plain `(ctx, channelID,
-userID, …string)` arguments. They call store + analyzer + the Slack
-Web API; none of them touch Socket Mode. This is what makes a shared
-core realistic.
+The bot's **handler functions are already transport-agnostic** —
+`runNew`, `runPM`, `runClose`, `runStatus`, `runQA`, `runExport`,
+`runReopen` take plain `(ctx, channelID, userID, …string)` args and
+call store + analyzer + the Slack Web API. Nothing about them is
+Socket-specific.
 
-## 4. The three I/O seams to abstract
+## 4. The two I/O seams to abstract
 
-The work is introducing three interfaces in the shared core, with two
-implementations each:
+Because SQLite stays, only **two** interfaces are introduced (the
+Firestore edition would have needed a third — a `Store` interface):
 
-1. **Store** — today every consumer (`bot`, `cases`, `analysis`,
-   `ingest`, `export`) takes the concrete `*store.Store`. Introduce a
-   `Store` interface (≈19 methods, 11 hot) with `sqlite` and
-   `firestore` implementations. This is the largest change.
+1. **Transport** — a thin `Socket` interface already exists
+   (`bot/socket.go`). Generalize event intake so the same handlers are
+   reachable from either the Socket Mode loop (standalone) or HTTP
+   request handlers (serverless). The 3-second ack becomes "return
+   HTTP 200 immediately, do work async."
 
-2. **Transport** — a thin `Socket` interface already exists
-   (`bot/socket.go`). Generalize the event intake so the same handler
-   functions are reachable from either the Socket Mode loop or HTTP
-   request handlers (parse the Slack payload → call `runX`). The
-   3-second ack becomes "return HTTP 200 immediately, do work async."
-
-3. **Job runner** — the `dispatch(fast, fn)` goroutine+semaphore
+2. **Job runner** — the `dispatch(fast, fn)` goroutine+semaphore
    mechanism becomes a `JobRunner` interface: `inproc` (current
-   goroutines) and `cloudtasks` (enqueue an HTTP task carrying the
-   handler name + its string args). Handlers already take simple
-   serializable args, so the task payload is small JSON like
+   goroutines, standalone) and `cloudtasks` (enqueue an HTTP task with
+   the handler name + its string args, serverless). Handlers already
+   take simple serializable args, so a task payload is small JSON like
    `{"op":"pm","channel":"C…","user":"U…"}`.
 
-## 5. The three genuinely hard parts (Firestore)
+The `store` package needs **no interface and no change**.
 
-Firestore is not SQL; three SQLite-specific mechanisms need redesign.
-All are solvable, and ir-hub's small scale makes them easier.
+## 5. Architecture (single service, single writer)
 
-| Hard part | Why | Proposed solution |
-|---|---|---|
-| **`SearchKnowledge` (LIKE)** | Firestore has no substring/LIKE search | Load all knowledge and filter in memory. The corpus is small (tens of docs), and the RFP already mandates "full-text context load, no vector RAG," so this *matches* the intended design rather than fighting it. Q&A already falls back to "load all" today. |
-| **`FinalizePMRun` (single tx: replace knowledge + day-scoped tactic-ID `tac-YYYYMMDD-NNN`)** | Firestore tx can't `MAX()`-scan for the next sequence | A per-day counter document incremented inside a Firestore transaction; the (≤~10) knowledge writes for one case fit a single Firestore tx (500-doc limit). Deterministic IDs are preserved. |
-| **Case `AUTOINCREMENT` (drives `ir-0042-…` channel names)** | Firestore has no `LastInsertId` | A single `case_seq` counter document, incremented transactionally on case creation. Human-readable sequence numbers are preserved (don't switch to UUIDs — the numbering is user-facing). |
-
-None forces a consistency downgrade for ir-hub's volume: a single
-incident writes a handful of docs, well within Firestore's
-transactional limits.
-
-## 6. Proposed serverless architecture
+The non-obvious constraint: **SQLite is single-writer, so ingress and
+worker must live in the same Cloud Run service / instance.** Two
+separate services couldn't share the SQLite file. So:
 
 ```
-Slack ──HTTP POST──▶ Cloud Run (ingress, scale-to-zero)
-  (events / slash /        │  1. verify signing secret
-   interactivity)          │  2. return 200 within 3s
-                           │  3. enqueue Cloud Task (op + args)
-                           ▼
-                     Cloud Tasks
-                           │
-                           ▼
-                  Cloud Run (worker)  ──▶ Firestore (state + knowledge)
-                  runPM / runQA / …   ──▶ Vertex AI (postmortem)
-                                      ──▶ GCS/S3 (knowledge export)
+Slack ──HTTP──▶ Cloud Run service (max-instances=1, scale-to-zero)
+                  │
+  /slack/* (ingress paths)        /tasks/run (worker path)
+  • verify signing secret         • the only DB-touching path
+  • return 200 within 3s          • handler dispatch (runPM, runQA…)
+  • enqueue Cloud Task ───────▶   • Vertex AI / GCS export
+  • NO database access               ▲
+                                     │
+                          Cloud Tasks (same service target)
+                                     │
+   litestream  ◀── restore on start / continuous WAL replicate ──▶ GCS
 ```
 
-- **Ingress** is cheap and fast: verify, ack, enqueue. It can
-  scale-to-zero between events; Slack retries on non-2xx.
-- **Worker** runs the actual handler (PM can take minutes — Cloud Run
-  request timeout is up to 60 min, ample). Also scales to zero.
-- **Ingestion**: the HTTP `message` event callback feeds the *same*
-  `ingest.HandleMessage(*slackevents.MessageEvent)` path — no logic
-  change. Reconnect-backfill is replaced by Slack's own event
-  delivery + retries (simpler).
+- **ingress paths touch no database** — they verify, ack, and enqueue.
+  This keeps the 3-second response fast even on a cold start (no
+  restore needed to ack).
+- **the worker path is the only DB consumer** — its cold start runs
+  `litestream restore`; because it's invoked via Cloud Tasks (async,
+  retried), it is not bound by the 3-second rule.
+- **`max-instances=1`** guarantees one SQLite writer. Cloud Tasks
+  targets the same service, so the worker runs on the same instance.
+  `modernc` SQLite with `SetMaxOpenConns(1)` (already configured)
+  serializes writes within the instance.
+- **ingestion** (`message` events) also routes through enqueue → the
+  worker's `ingest.HandleMessage` path, so ingress stays DB-free.
+- **litestream** restores on startup and streams the WAL to GCS
+  continuously, flushing on `SIGTERM` (Cloud Run's shutdown signal).
+  Loss window is seconds, far better than a periodic full-DB sync.
 
-## 7. Technology choices
+## 6. Why this beats the Firestore route
 
-| Decision | Options | Recommendation |
-|---|---|---|
-| Repo layout | (a) same repo, interfaces + build/config switch; (b) separate repo + shared library | **(a)** — one core, two wirings; avoids drift |
-| Database | Firestore; Cloud SQL (Postgres); Cloud Run+litestream (keeps SQLite, but no scale-to-zero) | **Firestore** — the only option that truly scales to zero |
-| Async | Cloud Tasks; Pub/Sub; Workflows | **Cloud Tasks** — HTTP-native, simple retries, per-task |
-| Knowledge search | in-memory filter; Algolia/Typesense | **in-memory** at current scale; revisit if the corpus grows large |
-| Host | Cloud Run; Cloud Functions (2nd gen = Cloud Run) | **Cloud Run** |
-| Slack auth | signing secret (HTTP) replaces the Socket app-level token | add `[slack] signing_secret`, drop `app_token` for this edition |
+A Firestore edition would have to redesign three SQLite-specific
+mechanisms. Keeping SQLite **avoids all of them**:
+
+| Hard part (Firestore) | With SQLite + litestream |
+|---|---|
+| `SearchKnowledge` LIKE has no Firestore equivalent | unchanged — SQLite LIKE works |
+| `FinalizePMRun` single tx + day-scoped `tac-YYYYMMDD-NNN` | unchanged — SQLite transaction works |
+| case `AUTOINCREMENT` drives `ir-0042-…` channel names | unchanged — AUTOINCREMENT works |
+| schema-version migrations | unchanged |
+
+This is why the chosen approach is also the **smaller change**.
+
+## 7. Open design points (carried into implementation)
+
+1. **Cold-start latency vs. slash 3s.** With `min-instances=0`, the
+   first slash command after idle pays a container cold start; if it
+   exceeds 3s, Slack shows a failure and the user re-runs. Events and
+   interactivity are retried by Slack automatically, so only
+   user-typed slash is exposed. Mitigation if it bites:
+   `min-instances=1` (always-warm, but loses full scale-to-zero, ~a
+   small fixed cost) — a knob, decided by measurement.
+2. **Instance handoff.** During a deploy or instance replacement, two
+   instances can momentarily overlap. litestream detects competing
+   writers; combined with `max-instances=1` and brief deploys the risk
+   is small, but the cutover must drain writes first.
+3. **Worker timeout.** A postmortem takes minutes; Cloud Run request
+   timeout (up to 60 min) covers it — the worker request stays open
+   for the duration, keeping the instance alive.
 
 ## 8. Phased plan
 
-Phases S1–S2 are pure refactors of the *current* code (introduce
-interfaces, keep the SQLite/Socket/goroutine implementations behind
-them). They ship in the Standalone Edition with no behavior change
-and de-risk everything after.
+Phases S1–S2 are pure refactors of the *current* code (introduce two
+interfaces, keep Socket Mode + goroutines behind them). They ship in
+the Standalone Edition with no behavior change and improve its
+testability, de-risking the rest.
 
 | Phase | Work | Risk |
 |---|---|---|
-| **S1** | Introduce the `Store` interface; current SQLite becomes one impl. No behavior change. | low (refactor) |
-| **S2** | Introduce `Transport` + `JobRunner` interfaces; Socket Mode + goroutines become impls. | low (refactor) |
-| **S3** | Firestore `Store` impl: counters for case-seq and tactic-IDs, in-memory knowledge search, schema-version doc. | medium |
-| **S4** | HTTP transport: signing-secret verification, event/slash/interactivity parsing, 3s-ack pattern. | medium |
-| **S5** | Cloud Tasks `JobRunner`: ingress enqueues, worker endpoint dispatches by op. | medium |
-| **S6** | Cloud Run deploy (ingress + worker), scale-to-zero validation, real cost measurement, IaC. | medium |
+| **S1** | Introduce the `Transport` interface; generalize event intake so handlers are transport-agnostic. Socket Mode becomes one impl. | low (refactor) |
+| **S2** | Introduce the `JobRunner` interface; goroutine dispatch becomes the `inproc` impl. | low (refactor) |
+| **S3** | HTTP transport impl: signing-secret verification, event/slash/interactivity parsing, immediate-200 ack, ingress with no DB access. | medium |
+| **S4** | Cloud Tasks `JobRunner` impl: ingress enqueues, `/tasks/run` worker dispatches by op. | medium |
+| **S5** | litestream integration: restore on start, continuous replicate, SIGTERM flush. `store` code unchanged. | medium |
+| **S6** | Cloud Run deploy (single service, `max-instances=1`), scale-to-zero + cold-start + cost validation, IaC. | medium |
 
-Rough effort: ~2–3 weeks. S1–S2 are worth doing regardless, as they
-improve testability of the Standalone Edition too.
+The `store` package and all pure-logic packages are untouched
+throughout. Rough effort: smaller than the Firestore route — no store
+abstraction, no Firestore impl.
 
 ## 9. Cost estimate (order of magnitude)
 
-- **Standalone (VM):** e2-micro ≈ \$7/mo (or free-tier eligible),
-  billed 24/7.
-- **Serverless (scale-to-zero):** Cloud Run idle = \$0; Firestore at
-  low traffic is within/near the free tier; Cloud Tasks free tier
-  covers this volume; Vertex AI is billed only when a postmortem
-  runs. Realistically **a few hundred yen/month or less**, dominated
-  by incident-time LLM calls — which both editions pay anyway.
+- **Standalone (VM):** e2-micro ≈ \$7/mo (or free-tier), billed 24/7.
+- **Serverless (scale-to-zero):** Cloud Run idle = \$0; GCS holds the
+  replicated DB + WAL (cents/mo at this size); Cloud Tasks free tier
+  covers the volume; Vertex AI billed only when a postmortem runs.
+  Realistically **a few hundred yen/month or less**, dominated by
+  incident-time LLM calls (which both editions pay anyway). If
+  `min-instances=1` is needed for slash latency, add the cost of one
+  small always-warm instance.
 
-The serverless edition wins on idle cost; the VM wins on operational
-simplicity and no per-request cold starts.
+## 10. Alternatives considered (and rejected)
 
-## 10. Open decisions (need sign-off)
+- **Firestore** (managed, true serverless DB): rejected because it
+  forces redesigning `SearchKnowledge`, `FinalizePMRun`, and case
+  sequence numbers, and requires a `store` interface — much larger
+  change for no benefit at ir-hub's scale.
+- **Keep Socket Mode + Cloud Run `min=1`** (litestream, no HTTP
+  switch): rejected because Socket Mode's always-on connection
+  prevents scale-to-zero, so it costs like a VM with none of the
+  serverless savings.
+
+## 11. Open decisions (need sign-off)
 
 1. **Repo layout** — same repo with interface switch (recommended) vs
    a separate `ir-hub-serverless` repo.
-2. **Database** — Firestore (recommended) vs Cloud SQL.
-3. **Scope of S1–S2 now** — do the interface refactor in the
-   Standalone Edition immediately (improves it, de-risks serverless)
-   even before committing to the full serverless build?
-4. **Knowledge search at scale** — accept in-memory filtering, or plan
-   for a full-text service if the corpus is expected to grow large.
-
-## 11. Risks
-
-- **Store interface surface is wide** (~19 methods); the abstraction
-  must not leak SQLite-isms (e.g. `sql.NullString`, `LIKE` strings).
-  Mitigated by designing the interface around intent, not SQL.
-- **Firestore eventual consistency** on list queries — fine for
-  knowledge/case listing, but tactic-ID counters and case-seq must use
-  transactions for correctness.
-- **Cold starts** add latency to the first event after idle; ack
-  happens on the ingress which stays small, so the user-visible 3s
-  rule is safe, but the *first* PM after idle pays a cold start.
-- **Two code paths to maintain** — kept minimal by sharing the core;
-  only impls differ. CI must build/test both editions.
+2. **Do S1–S2 now** — the transport/job-runner refactor improves the
+   Standalone Edition and de-risks serverless; worth doing before
+   committing to the full serverless build?
+3. **`min-instances` policy** — start at 0 (cheapest, accept rare
+   slash cold-start) and revisit by measurement, or 1 from the start.
