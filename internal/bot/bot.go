@@ -39,7 +39,7 @@ const defaultMaxConcurrent = 16
 // Analyzer is the LLM analysis surface the bot consumes;
 // analysis.Runner implements it, tests fake it.
 type Analyzer interface {
-	RunPostmortem(ctx context.Context, c *store.Case) (*analysis.Report, error)
+	RunPostmortem(ctx context.Context, c *store.Case, progress func(done, total int)) (*analysis.Report, error)
 	Translate(ctx context.Context, rep *analysis.Report) *analysis.Report
 	StatusSummary(ctx context.Context, c *store.Case) (string, error)
 	Answer(ctx context.Context, c *store.Case, question string, docs []store.KnowledgeDoc) (string, error)
@@ -732,11 +732,31 @@ func (b *Bot) runPM(ctx context.Context, channelID, userID, responseURL string) 
 		return
 	}
 
-	if _, err := b.api.PostMessage(ctx, channelID, slack.MsgOptionText(m.PMStarted, false)); err != nil {
-		b.logf("bot: pm progress post: %v", err)
+	// Progress message: posted once, then edited in place as stages
+	// complete so responders can see the analysis advancing.
+	progressTS, perr := b.api.PostMessage(ctx, channelID, slack.MsgOptionText(m.PMStarted, false))
+	if perr != nil {
+		b.logf("bot: pm progress post: %v", perr)
+	}
+	var pmu sync.Mutex
+	shown := 0
+	progress := func(done, total int) {
+		if progressTS == "" {
+			return
+		}
+		pmu.Lock()
+		defer pmu.Unlock()
+		if done <= shown { // stages finish out of order; never go backwards
+			return
+		}
+		shown = done
+		if err := b.api.UpdateMessage(ctx, channelID, progressTS,
+			slack.MsgOptionText(m.F(m.PMProgress, done, total), false)); err != nil {
+			b.logf("bot: pm progress update: %v", err)
+		}
 	}
 
-	rep, err := b.analyzer.RunPostmortem(ctx, c)
+	rep, err := b.analyzer.RunPostmortem(ctx, c, progress)
 	if err != nil {
 		b.logf("bot: postmortem case #%d: %v", c.ID, err)
 		if ferr := b.store.FailPMRun(runID, err.Error()); ferr != nil {

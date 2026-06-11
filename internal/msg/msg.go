@@ -98,6 +98,7 @@ type Catalog struct {
 	// Postmortem flow (bot posts).
 	ModalActionPM     string
 	PMStarted         string
+	PMProgress        string // %d done, %d total
 	PMNoMessages      string
 	PMAlreadyRunning  string
 	PMFailed          string // %v error
@@ -221,6 +222,7 @@ var EN = Catalog{
 
 	ModalActionPM:     "Run postmortem",
 	PMStarted:         ":hourglass_flowing_sand: Postmortem analysis started — this usually takes a few minutes.",
+	PMProgress:        ":hourglass_flowing_sand: Analyzing the incident… (%d/%d stages complete)",
 	PMNoMessages:      "this case has no ingested messages to analyze",
 	PMAlreadyRunning:  "a postmortem run is already in progress for this case",
 	PMFailed:          ":warning: postmortem failed: %v — retry with `/ir-hub pm`",
@@ -328,6 +330,7 @@ var JA = Catalog{
 
 	ModalActionPM:     "ポストモーテムを実行",
 	PMStarted:         ":hourglass_flowing_sand: ポストモーテム分析を開始しました — 通常数分かかります。",
+	PMProgress:        ":hourglass_flowing_sand: インシデントを分析中… (%d/%d ステージ完了)",
 	PMNoMessages:      "この案件には分析対象のメッセージがありません",
 	PMAlreadyRunning:  "この案件のポストモーテムは既に実行中です",
 	PMFailed:          ":warning: ポストモーテムに失敗しました: %v — `/ir-hub pm` で再実行できます",

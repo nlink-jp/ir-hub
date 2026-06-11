@@ -44,6 +44,8 @@ type API interface {
 	AddReaction(ctx context.Context, name, channelID, timestamp string) error
 	// RemoveReaction removes an emoji reaction from a message.
 	RemoveReaction(ctx context.Context, name, channelID, timestamp string) error
+	// UpdateMessage replaces the text of an existing message.
+	UpdateMessage(ctx context.Context, channelID, timestamp string, opts ...slack.MsgOption) error
 }
 
 // Adapter implements API on a real *slack.Client.
@@ -116,4 +118,9 @@ func (a *Adapter) AddReaction(ctx context.Context, name, channelID, timestamp st
 
 func (a *Adapter) RemoveReaction(ctx context.Context, name, channelID, timestamp string) error {
 	return a.c.RemoveReactionContext(ctx, name, slack.NewRefToMessage(channelID, timestamp))
+}
+
+func (a *Adapter) UpdateMessage(ctx context.Context, channelID, timestamp string, opts ...slack.MsgOption) error {
+	_, _, _, err := a.c.UpdateMessageContext(ctx, channelID, timestamp, opts...)
+	return err
 }

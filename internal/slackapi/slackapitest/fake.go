@@ -29,6 +29,7 @@ type Fake struct {
 	UploadFileFn             func(ctx context.Context, params slack.UploadFileParameters) (*slack.FileSummary, error)
 	AddReactionFn            func(ctx context.Context, name, channelID, timestamp string) error
 	RemoveReactionFn         func(ctx context.Context, name, channelID, timestamp string) error
+	UpdateMessageFn          func(ctx context.Context, channelID, timestamp string, opts ...slack.MsgOption) error
 }
 
 func (f *Fake) record(name string) {
@@ -149,6 +150,14 @@ func (f *Fake) RemoveReaction(ctx context.Context, name, channelID, timestamp st
 	f.record("RemoveReaction:" + name)
 	if f.RemoveReactionFn != nil {
 		return f.RemoveReactionFn(ctx, name, channelID, timestamp)
+	}
+	return nil
+}
+
+func (f *Fake) UpdateMessage(ctx context.Context, channelID, timestamp string, opts ...slack.MsgOption) error {
+	f.record("UpdateMessage")
+	if f.UpdateMessageFn != nil {
+		return f.UpdateMessageFn(ctx, channelID, timestamp, opts...)
 	}
 	return nil
 }

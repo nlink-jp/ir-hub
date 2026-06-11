@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nlink-jp/nlk/jsonfix"
@@ -87,16 +88,31 @@ func runStage[T any](ctx context.Context, c llm.Client, sys, user string, normal
 	return &out, nil
 }
 
+// PostmortemStages is the number of analysis stages a progress
+// callback counts toward (summary, activity, roles, tactics,
+// review).
+const PostmortemStages = 5
+
 // RunPostmortem executes the full five-stage postmortem for a case.
 // Any stage failure fails the whole run (no partial reports);
-// re-run with /ir-hub pm.
-func (r *Runner) RunPostmortem(ctx context.Context, c *store.Case) (*Report, error) {
+// re-run with /ir-hub pm. progress, if non-nil, is called once per
+// completed stage with (done, PostmortemStages) — done is
+// monotonic but stages complete out of order (four run in
+// parallel).
+func (r *Runner) RunPostmortem(ctx context.Context, c *store.Case, progress func(done, total int)) (*Report, error) {
 	in, err := r.buildInput(c)
 	if err != nil {
 		return nil, err
 	}
 	if in.Analyzed == 0 {
 		return nil, fmt.Errorf("no analyzable messages in case #%d", c.ID)
+	}
+
+	var done int32
+	tick := func() {
+		if progress != nil {
+			progress(int(atomic.AddInt32(&done, 1)), PostmortemStages)
+		}
 	}
 
 	var (
@@ -110,19 +126,27 @@ func (r *Runner) RunPostmortem(ctx context.Context, c *store.Case) (*Report, err
 	wg.Add(4)
 	go func() {
 		defer wg.Done()
-		summary, errs[0] = r.stageSummary(ctx, in)
+		if summary, errs[0] = r.stageSummary(ctx, in); errs[0] == nil {
+			tick()
+		}
 	}()
 	go func() {
 		defer wg.Done()
-		activity, errs[1] = r.stageActivity(ctx, in)
+		if activity, errs[1] = r.stageActivity(ctx, in); errs[1] == nil {
+			tick()
+		}
 	}()
 	go func() {
 		defer wg.Done()
-		roles, errs[2] = r.stageRoles(ctx, in)
+		if roles, errs[2] = r.stageRoles(ctx, in); errs[2] == nil {
+			tick()
+		}
 	}()
 	go func() {
 		defer wg.Done()
-		tactics, errs[3] = r.stageTactics(ctx, in)
+		if tactics, errs[3] = r.stageTactics(ctx, in); errs[3] == nil {
+			tick()
+		}
 	}()
 	wg.Wait()
 	for i, name := range []string{"summary", "activity", "roles", "tactics"} {
@@ -135,6 +159,7 @@ func (r *Runner) RunPostmortem(ctx context.Context, c *store.Case) (*Report, err
 	if err != nil {
 		return nil, fmt.Errorf("postmortem stage review: %w", err)
 	}
+	tick()
 
 	return &Report{
 		CaseID:           c.ID,

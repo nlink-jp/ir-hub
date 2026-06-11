@@ -89,7 +89,7 @@ func TestRunPostmortem(t *testing.T) {
 	fake := &llmtest.Fake{Rules: defaultRules()}
 	r := newRunner(t, fake, st, "en")
 
-	rep, err := r.RunPostmortem(context.Background(), c)
+	rep, err := r.RunPostmortem(context.Background(), c, nil)
 	if err != nil {
 		t.Fatalf("RunPostmortem: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestReviewNeverSeesRawMessages(t *testing.T) {
 	fake := &llmtest.Fake{Rules: defaultRules()}
 	r := newRunner(t, fake, st, "en")
 
-	if _, err := r.RunPostmortem(context.Background(), c); err != nil {
+	if _, err := r.RunPostmortem(context.Background(), c, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, req := range fake.RequestsCopy() {
@@ -151,7 +151,7 @@ func TestBotPostsExcluded(t *testing.T) {
 	fake := &llmtest.Fake{Rules: defaultRules()}
 	r := newRunner(t, fake, st, "en")
 
-	if _, err := r.RunPostmortem(context.Background(), c); err != nil {
+	if _, err := r.RunPostmortem(context.Background(), c, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, req := range fake.RequestsCopy() {
@@ -168,7 +168,7 @@ func TestStageFailureFailsRun(t *testing.T) {
 	fake := &llmtest.Fake{Rules: rules}
 	r := newRunner(t, fake, st, "en")
 
-	_, err := r.RunPostmortem(context.Background(), c)
+	_, err := r.RunPostmortem(context.Background(), c, nil)
 	if err == nil || !strings.Contains(err.Error(), "roles") {
 		t.Errorf("err = %v, want roles stage failure", err)
 	}
@@ -187,7 +187,7 @@ func TestStageToleratesFencedAndDriftedJSON(t *testing.T) {
 	fake := &llmtest.Fake{Rules: rules}
 	r := newRunner(t, fake, st, "en")
 
-	rep, err := r.RunPostmortem(context.Background(), c)
+	rep, err := r.RunPostmortem(context.Background(), c, nil)
 	if err != nil {
 		t.Fatalf("RunPostmortem: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestTruncationKeepsNewest(t *testing.T) {
 		MaxInputTokens: promptOverheadTokens + 700,
 	}, WithLogger(t.Logf))
 
-	rep, err := r.RunPostmortem(context.Background(), c)
+	rep, err := r.RunPostmortem(context.Background(), c, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestInputDefangedAndWrapped(t *testing.T) {
 	fake := &llmtest.Fake{Rules: defaultRules()}
 	r := newRunner(t, fake, st, "en")
 
-	if _, err := r.RunPostmortem(context.Background(), c); err != nil {
+	if _, err := r.RunPostmortem(context.Background(), c, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, req := range fake.RequestsCopy() {
@@ -272,7 +272,7 @@ func TestTranslateAppliesAndFallsBack(t *testing.T) {
 	})}
 	r := newRunner(t, fake, st, "ja")
 
-	rep, err := r.RunPostmortem(context.Background(), c)
+	rep, err := r.RunPostmortem(context.Background(), c, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func TestTranslateBrokenResponseKeepsEnglish(t *testing.T) {
 	})}
 	r := newRunner(t, fake, st, "ja")
 
-	rep, _ := r.RunPostmortem(context.Background(), c)
+	rep, _ := r.RunPostmortem(context.Background(), c, nil)
 	tr := r.Translate(context.Background(), rep)
 	if tr.Summary.Title != "DB outage" {
 		t.Errorf("title = %q, want English fallback", tr.Summary.Title)
@@ -322,7 +322,7 @@ func TestTranslateSkippedForEnglish(t *testing.T) {
 	st, c := newStoreWithCase(t, "msg")
 	fake := &llmtest.Fake{Rules: defaultRules()}
 	r := newRunner(t, fake, st, "en")
-	rep, _ := r.RunPostmortem(context.Background(), c)
+	rep, _ := r.RunPostmortem(context.Background(), c, nil)
 
 	before := len(fake.RequestsCopy())
 	if got := r.Translate(context.Background(), rep); got != rep {
@@ -360,7 +360,7 @@ func TestRenderMarkdown(t *testing.T) {
 	st, c := newStoreWithCase(t, "msg")
 	fake := &llmtest.Fake{Rules: defaultRules()}
 	r := newRunner(t, fake, st, "en")
-	rep, _ := r.RunPostmortem(context.Background(), c)
+	rep, _ := r.RunPostmortem(context.Background(), c, nil)
 
 	md := RenderMarkdown(rep, &msg.EN)
 	for _, want := range []string{

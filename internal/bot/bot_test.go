@@ -115,12 +115,19 @@ func sampleReport(caseID int64) *analysis.Report {
 	}
 }
 
-func (f *fakeAnalyzer) RunPostmortem(ctx context.Context, c *store.Case) (*analysis.Report, error) {
+func (f *fakeAnalyzer) RunPostmortem(ctx context.Context, c *store.Case, progress func(done, total int)) (*analysis.Report, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.pmCalls++
 	if f.pmErr != nil {
 		return nil, f.pmErr
+	}
+	// Drive the progress callback so the bot's update path is
+	// exercised.
+	if progress != nil {
+		for i := 1; i <= analysis.PostmortemStages; i++ {
+			progress(i, analysis.PostmortemStages)
+		}
 	}
 	if f.report != nil {
 		return f.report, nil
@@ -1047,6 +1054,40 @@ func TestPMCommandRunsPostmortem(t *testing.T) {
 	if !strings.Contains(up.InitialComment, "Postmortem: Case #0001") ||
 		!strings.Contains(up.InitialComment, "Process score: 7/10") {
 		t.Errorf("compact = %q", up.InitialComment)
+	}
+}
+
+func TestPMPostsProgressUpdates(t *testing.T) {
+	var mu sync.Mutex
+	var updates []string
+	api := &slackapitest.Fake{
+		PostMessageFn: func(ctx context.Context, channelID string, opts ...slack.MsgOption) (string, error) {
+			return "1718000000.000200", nil // progress message ts
+		},
+		UpdateMessageFn: func(ctx context.Context, channelID, ts string, opts ...slack.MsgOption) error {
+			_, values, _ := slack.UnsafeApplyMsgOptions("tok", channelID, "https://slack.test/api/", opts...)
+			mu.Lock()
+			updates = append(updates, values.Get("text"))
+			mu.Unlock()
+			return nil
+		},
+	}
+	h := newHarness(t, api, Config{})
+	h.openCaseWithMessages(t, "C1", 2)
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "C1", "pm"))
+	h.bot.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	// The fake analyzer drives 5 progress ticks; the bot edits the
+	// progress message and the final update shows all stages done.
+	if len(updates) == 0 {
+		t.Fatal("no progress updates posted")
+	}
+	last := updates[len(updates)-1]
+	if !strings.Contains(last, "5/5") {
+		t.Errorf("final progress = %q, want 5/5", last)
 	}
 }
 

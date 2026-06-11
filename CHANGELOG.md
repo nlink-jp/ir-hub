@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - `/ir-hub reopen` (slash + modal) reopens a closed case
     (closed → open, closure fields cleared), resuming message
     ingestion; a subsequent close re-runs the postmortem
+  - The postmortem progress message is now edited in place as each
+    of the 5 stages completes (`Analyzing… (N/5 stages complete)`),
+    so responders can see the multi-minute analysis advancing
   - Q&A acknowledges a question immediately with a 👀 reaction
     (removed once the answer posts), since the LLM call takes
     several seconds — requires the new `reactions:write` scope
