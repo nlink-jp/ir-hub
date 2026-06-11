@@ -46,7 +46,13 @@ ir-hub/
 │   ├── cases/              # lifecycle use-cases: New/Close/Status
 │   ├── modal/              # Block Kit modals build + submission parse
 │   ├── ingest/             # message events + reconnect backfill
-│   └── bot/                # socketmode loop, ack/dedup/dispatch/shutdown
+│   ├── defang/             # IoC defanging (pure functions, ai-ir2 port)
+│   ├── sanitize/           # advisory injection-pattern detection
+│   ├── llm/                # LLM Client boundary + Vertex AI adapter
+│   │   └── llmtest/        # marker-routed fake for pipeline tests
+│   ├── analysis/           # 5-stage postmortem, status summary, translation
+│   ├── knowledge/          # tactic → JSON+MD pair, slugs
+│   └── bot/                # socketmode loop, ack/dedup/dispatch/shutdown, PM wiring
 ├── scripts/                # codesign / notarize (org templates, verbatim)
 ├── config.example.toml     # copy to ~/.config/ir-hub/config.toml
 ├── docs/
@@ -54,24 +60,28 @@ ir-hub/
 └── Makefile
 ```
 
-Dependency direction: `bot → {acl, cases, modal, ingest, command}`;
-`cases/ingest/acl → slackapi (interface) + store`. No package-level
-singletons — everything is constructor-injected, clocks via
-`func() time.Time`, waiting via a small Sleeper interface.
+Dependency direction: `bot → {acl, cases, modal, ingest, command,
+analysis (Analyzer interface), knowledge}`; `analysis → {llm,
+defang, sanitize, knowledge, store, msg}`; `cases/ingest/acl →
+slackapi (interface) + store`. No package-level singletons —
+everything is constructor-injected, clocks via `func() time.Time`,
+waiting via a small Sleeper interface.
 
-Planned packages for later phases: `internal/analysis` (Phase 2
-postmortem), `internal/knowledge` (Phase 2/3 index + export
-backends).
+Planned for Phase 3: storage export backends (local/GCS/S3) and the
+knowledge Q&A / briefing retrieval (FTS + tags → full-text context
+load — NO chunk+vector RAG, see CLAUDE.md).
 
 ## Configuration model
 
 Sections in `config.example.toml`: `[gcp]` + `[model]` (org-standard
-Vertex AI pattern), `[channel]` (visibility default, name prefix),
-`[acl]` (allow/deny users + User Groups, cache TTL, notify_denied),
-`[storage]` (local | gcs | s3), `[db]` (SQLite path), `[slack]`
-(tokens; optional — env wins). Env-var overrides use the `IRHUB_*`
-prefix. Load warns when the config file is group/other readable
-(`cfg.Warnings`, printed by serve).
+Vertex AI pattern; project REQUIRED for serve since Phase 2),
+`[channel]` (visibility default, name prefix), `[acl]` (allow/deny
+users + User Groups, cache TTL, notify_denied), `[analysis]`
+(request_timeout, max_input_tokens), `[storage]` (local | gcs | s3),
+`[db]` (SQLite path), `[slack]` (tokens; optional — env wins).
+Env-var overrides use the `IRHUB_*` prefix. Load warns when the
+config file is group/other readable (`cfg.Warnings`, printed by
+serve).
 
 ## Coding rules
 
@@ -129,3 +139,15 @@ After Phase 3 completes:
   SQLite driver.
 - Per org ADR-001, use Gemini 2.5 until Gemini 3 GA; add ir-hub to
   the org migration list when it ships.
+- **Analysis is English-canonical**: pm_runs/report and knowledge
+  documents are stored in English; only channel-facing renders go
+  through `analysis.Translate` (narrative fields only, field-level
+  English fallback). Don't store translated artifacts.
+- **The review stage must never see raw messages** — it consumes the
+  structured outputs of the other four stages (ai-ir2 design; a test
+  enforces it).
+- **Defang twice**: conversation text before the LLM AND the model's
+  raw response before JSON parsing (models refang). `defang.Text` is
+  idempotent on already-defanged forms.
+- **FinalizePMRun holds the single SQLite connection's write tx** —
+  never put LLM calls inside it; build everything first.

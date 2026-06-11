@@ -7,10 +7,12 @@ accumulation and reuse.
 
 [日本語版 README はこちら](README.ja.md)
 
-> **Status: pre-release.** Phase 1 (bot foundation + lifecycle
-> management, no LLM yet) is implemented. LLM postmortems arrive in
-> Phase 2, knowledge reuse in Phase 3. See the
-> [RFP](docs/en/ir-hub-rfp.md) for the approved design.
+> **Status: pre-release.** Phases 1–2 are implemented: case
+> lifecycle management plus LLM postmortems (auto on close,
+> re-runnable), LLM status summaries, and knowledge-document
+> generation. Knowledge reuse (Q&A, briefings, storage export)
+> arrives in Phase 3. See the [RFP](docs/en/ir-hub-rfp.md) for the
+> approved design.
 
 ## Concept
 
@@ -24,8 +26,17 @@ accumulation and reuse.
 ```
 
 - **Case lifecycle on Slack** — `/ir-hub new` opens a dedicated
-  channel per incident; `/ir-hub close` closes the case (and will run
-  the postmortem from Phase 2 on)
+  channel per incident; `/ir-hub close` closes the case and runs the
+  postmortem automatically
+- **LLM postmortems (ai-ir2 theory, rebuilt)** — five analysis
+  stages (summary, participant activity, role inference, tactic
+  extraction, process review) on Vertex AI Gemini, with nonce-tag
+  prompt-injection defense and IoC defanging before AND after the
+  model. Analysis is English-canonical; channel posts are translated
+  to the configured language
+- **Knowledge documents** — each extracted tactic becomes a JSON +
+  Markdown pair, indexed (tags / category / summary) in the DB at
+  postmortem finalization; re-runs replace a case's knowledge
 - **Dual-mode slash command** — pass arguments for direct execution,
   or run bare `/ir-hub` to pick the action from a modal
 - **ACL built in** — whitelist + blacklist by user ID and by Slack
@@ -44,14 +55,22 @@ accumulation and reuse.
 |---|---|
 | `/ir-hub` | Open a modal to pick the action (no parameters to remember) |
 | `/ir-hub new <title> [--severity low\|medium\|high\|critical] [--private\|--public]` | Create the case channel, invite you, post a kickoff message |
-| `/ir-hub status` | Post case metadata: state, severity, open duration, ingested message count |
-| `/ir-hub close` | Close the case (run inside the case channel) |
-| `@ir-hub <question>` | Knowledge Q&A — answers arrive in Phase 3; Phase 1 replies with a notice |
+| `/ir-hub status` | Post case metadata followed by an LLM situation summary (current status / open items / next actions) |
+| `/ir-hub close` | Close the case and run the postmortem automatically (inside the case channel) |
+| `/ir-hub pm` | Run (or re-run) the postmortem manually — replaces the case's knowledge documents |
+| `@ir-hub <question>` | Knowledge Q&A — answers arrive in Phase 3; for now replies with a notice |
+
+The postmortem posts a compact summary (severity, process score,
+strengths/improvements digest, tactic count) and attaches the full
+Markdown report as a snippet.
 
 ## Prerequisites
 
 - Go 1.26+ (build)
 - A Slack app with Socket Mode enabled (setup below)
+- A GCP project with the Vertex AI API enabled and Application
+  Default Credentials (`gcloud auth application-default login`) —
+  the postmortem and status analyses run on Gemini
 
 ## Slack app setup
 
@@ -180,7 +199,7 @@ ir-hub serve
 The bot reconnects automatically; after each reconnect it backfills
 missed messages from `conversations.history`.
 
-## Known limitations (Phase 1)
+## Known limitations
 
 - **Message edits/deletions are not ingested** (`message_changed` /
   `message_deleted` are skipped). Raw event JSON is stored, so later
@@ -189,8 +208,13 @@ missed messages from `conversations.history`.
   consumes a number by design (kept for audit).
 - **Private case channels** cannot be converted to public later, and
   ir-hub must remain a member to keep ingesting.
-- LLM features (`/ir-hub pm`, status summaries, Q&A, briefings,
-  knowledge export) arrive in Phases 2–3.
+- **Very long cases are truncated for analysis**: when a case
+  exceeds `analysis.max_input_tokens`, the newest messages within
+  budget are analyzed and the truncation is noted in the report.
+- **Participants appear as Slack user IDs** in reports and knowledge
+  documents (no display-name resolution yet).
+- Knowledge reuse (`@ir-hub` Q&A, initial briefings, storage export)
+  arrives in Phase 3.
 
 ## Building
 

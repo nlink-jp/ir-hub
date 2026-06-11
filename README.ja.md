@@ -6,9 +6,11 @@
 
 [English README is here](README.md)
 
-> **Status: pre-release.** Phase 1(Bot 基盤+ライフサイクル管理、LLM なし)
-> を実装済み。LLM ポストモーテムは Phase 2、知見再利用は Phase 3 で追加
-> されます。承認済み設計は [RFP](docs/ja/ir-hub-rfp.ja.md) を参照。
+> **Status: pre-release.** Phase 1–2 を実装済み: 案件ライフサイクル管理に
+> 加え、LLM ポストモーテム(クローズ時自動+再実行可)、LLM 状況サマリ、
+> 知見ドキュメント生成。知見の再利用(Q&A・ブリーフィング・ストレージ
+> 出力)は Phase 3 で追加されます。承認済み設計は
+> [RFP](docs/ja/ir-hub-rfp.ja.md) を参照。
 
 ## コンセプト
 
@@ -22,7 +24,15 @@
 ```
 
 - **Slack 上の案件ライフサイクル** — `/ir-hub new` で案件ごとの専用チャネルを
-  開設、`/ir-hub close` でクローズ(Phase 2 以降はポストモーテムを自動実行)
+  開設、`/ir-hub close` でクローズしポストモーテムを自動実行
+- **LLM ポストモーテム(ai-ir2 理論を再構築)** — 5 段階分析(サマリ /
+  参加者アクティビティ / ロール推定 / タクティック抽出 / プロセス評価)を
+  Vertex AI Gemini で実行。ノンスタグによるプロンプトインジェクション防御と、
+  LLM 前後両方での IoC defang。分析は英語カノニカル、チャネル投稿は
+  設定言語へ翻訳
+- **知見ドキュメント** — 抽出タクティックごとに JSON + Markdown ペアを生成し、
+  ポストモーテム確定時に DB へインデックス(タグ / カテゴリ / 要約)登録。
+  再実行で当該案件の知見は置換
 - **デュアルモードのスラッシュコマンド** — 引数ありで直接実行、引数なしの
   `/ir-hub` はモーダルから操作を選択
 - **ACL 内蔵** — ユーザー ID 単位+Slack User Group 単位の Whitelist +
@@ -39,14 +49,22 @@
 |---|---|
 | `/ir-hub` | モーダルで操作を選択(パラメータを覚える必要なし) |
 | `/ir-hub new <title> [--severity low\|medium\|high\|critical] [--private\|--public]` | 案件チャネル作成、起票者を招待、キックオフ投稿 |
-| `/ir-hub status` | 案件メタデータを投稿: 状態、severity、経過時間、取り込みメッセージ数 |
-| `/ir-hub close` | 案件をクローズ(案件チャネル内で実行) |
-| `@ir-hub <質問>` | 知見 Q&A — 回答は Phase 3 から。Phase 1 では案内を返信 |
+| `/ir-hub status` | 案件メタデータに続けて LLM 状況サマリ(現状 / 未解決事項 / 次アクション)を投稿 |
+| `/ir-hub close` | 案件をクローズし、ポストモーテムを自動実行(案件チャネル内で実行) |
+| `/ir-hub pm` | ポストモーテムを手動(再)実行 — 当該案件の知見ドキュメントを置換 |
+| `@ir-hub <質問>` | 知見 Q&A — 回答は Phase 3 から。現状は案内を返信 |
+
+ポストモーテムはコンパクトな要約(重要度、プロセススコア、良かった点/
+改善点ダイジェスト、タクティック数)を投稿し、全文 Markdown レポートを
+スニペットとして添付します。
 
 ## 前提条件
 
 - Go 1.26+(ビルド)
 - Socket Mode を有効化した Slack アプリ(下記)
+- Vertex AI API を有効化した GCP プロジェクトと Application Default
+  Credentials(`gcloud auth application-default login`)—
+  ポストモーテムと状況サマリは Gemini で実行されます
 
 ## Slack アプリの設定
 
@@ -175,7 +193,7 @@ ir-hub serve
 Bot は自動再接続し、再接続後は `conversations.history` から取りこぼしを
 backfill します。
 
-## 既知の制限(Phase 1)
+## 既知の制限
 
 - **メッセージの編集・削除は取り込まれません**(`message_changed` /
   `message_deleted` はスキップ)。生イベント JSON を保存しているため、
@@ -184,8 +202,13 @@ backfill します。
   監査のため意図的に残します。
 - **private 案件チャネル**は後から public に変換できません。また取り込みの
   継続には ir-hub がメンバーのままである必要があります。
-- LLM 機能(`/ir-hub pm`、状況サマリ、Q&A、ブリーフィング、知見出力)は
-  Phase 2–3 で追加されます。
+- **非常に長い案件は分析時に切り詰められます**: `analysis.max_input_tokens`
+  を超える場合、予算内の新しいメッセージを分析対象とし、レポートに
+  その旨を明記します。
+- **レポート・知見ドキュメント内の参加者は Slack ユーザー ID 表記**です
+  (表示名解決は未対応)。
+- 知見の再利用(`@ir-hub` Q&A、初動ブリーフィング、ストレージ出力)は
+  Phase 3 で追加されます。
 
 ## ビルド
 

@@ -54,10 +54,11 @@ Schema: see `config.example.toml` — sections `[gcp]`, `[model]`,
 - `modernc.org/sqlite` — pure-Go SQLite (keeps CGO_ENABLED=0
   cross-compiles working; do NOT switch to mattn/go-sqlite3)
 - `github.com/spf13/cobra`, `github.com/BurntSushi/toml`
-- Planned for Phase 2+: `google.golang.org/genai` (NOT the
-  deprecated vertexai/genai), `github.com/nlink-jp/nlk`
-  (`guard` / `backoff` / `jsonfix` — verify API signatures against
-  the real files before use)
+- `google.golang.org/genai` — Vertex AI Gemini, BackendVertexAI +
+  ADC (NOT the deprecated vertexai/genai)
+- `github.com/nlink-jp/nlk` — `guard` (nonce tags) / `backoff`
+  (LLM retries) / `jsonfix` (tolerant JSON) / `strip` (think tags);
+  verify API signatures against the real files before use
 
 ## Design constraints (from the RFP — canonical scope source)
 

@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Phase 2: LLM postmortems + in-flight support (Vertex AI Gemini).**
+  - `/ir-hub pm` (slash + modal action) and automatic postmortem on
+    `/ir-hub close`: five analysis stages — summary, participant
+    activity, role inference, tactic extraction (4 in parallel), and
+    a process review consuming only their structured outputs —
+    ported from ai-ir2's theory
+  - Knowledge documents: each tactic becomes a canonical-English
+    JSON + Markdown pair, indexed (tactic ID `tac-YYYYMMDD-NNN`,
+    tags, category, summary) in SQLite at postmortem finalization;
+    re-runs replace the case's knowledge atomically
+  - Channel output: compact summary post + full Markdown report
+    attached as a snippet (translated to the configured language;
+    PostMessage fallback when the upload fails)
+  - `/ir-hub status` now follows the metadata block with an LLM
+    situation summary (current status / open items / next actions)
+  - Security: nonce-tag prompt-injection defense (nlk/guard) with
+    the defense preamble first, advisory injection-pattern logging,
+    and IoC defanging both before and after the model
+  - Robustness: tolerant JSON decoding (nlk/jsonfix + type coercion
+    + enum normalization), token-budgeted newest-N input with
+    truncation notes, bot-post exclusion, transient-only LLM retries
+    with backoff, single-run-per-case guard, stale-run cleanup at
+    startup
+  - Config: `[analysis]` section (`request_timeout`,
+    `max_input_tokens`); `gcp.project` is now required for `serve`
+  - DB: versioned schema migrations (v1 → v2 adds `pm_runs` and
+    `knowledge` tables; existing databases migrate automatically)
+
 ## [0.1.0] - 2026-06-10
 
 ### Added
