@@ -59,11 +59,11 @@ func TestExportAll(t *testing.T) {
 		t.Errorf("written = %d, want 2", n)
 	}
 	// Deterministic paths: tactic_id + slug, JSON + MD pair.
-	got := fake.Get("knowledge/tac-20260610-001-check-systemd-logs.md")
+	got := fake.Get("tac-20260610-001-check-systemd-logs.md")
 	if string(got) != "# Check systemd logs" {
 		t.Errorf("md content = %q", got)
 	}
-	if j := fake.Get("knowledge/tac-20260610-001-check-systemd-logs.json"); j == nil {
+	if j := fake.Get("tac-20260610-001-check-systemd-logs.json"); j == nil {
 		t.Error("json pair missing")
 	}
 	if len(fake.Paths()) != 4 { // 2 docs × (json + md)

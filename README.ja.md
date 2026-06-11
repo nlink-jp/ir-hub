@@ -205,8 +205,9 @@ backfill します。
 ## 知見エクスポート
 
 `[storage]` でバックエンドを設定します。知見ドキュメントは
-`knowledge/<タクティック ID>-<slug>.json` / `.md` のペアとして、手動
-(`/ir-hub export`)とポストモーテム後の自動の両方で書き出されます。
+`<タクティック ID>-<slug>.json` / `.md` のペア(local は `local_path`
+直下、S3 は `s3_prefix` 配下)として、手動(`/ir-hub export`)と
+ポストモーテム後の自動の両方で書き出されます。
 
 ```toml
 [storage]

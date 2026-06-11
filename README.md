@@ -213,9 +213,9 @@ missed messages from `conversations.history`.
 ## Knowledge export
 
 Configure the storage backend in `[storage]`. Knowledge documents
-are written as `knowledge/<tactic-id>-<slug>.json` and `.md` pairs,
-both manually (`/ir-hub export`) and automatically after each
-postmortem.
+are written as `<tactic-id>-<slug>.json` and `.md` pairs (under the
+local `local_path`, or the S3 `s3_prefix`), both manually
+(`/ir-hub export`) and automatically after each postmortem.
 
 ```toml
 [storage]

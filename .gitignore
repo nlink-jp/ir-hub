@@ -15,6 +15,9 @@ dist/
 
 # Runtime state (embedded DB, exported knowledge)
 *.db
+# Default local export dir (config: [storage] local_path = "./knowledge").
+# Leading slash limits this to the repo root — internal/knowledge/ is source.
+/knowledge/
 
 # macOS
 .DS_Store

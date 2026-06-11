@@ -1,7 +1,9 @@
 // Package export writes knowledge documents to a storage backend so
 // teams outside IR can consume them. Each tactic is written as a
-// JSON + Markdown pair at a deterministic, idempotent path derived
-// from its tactic ID and title slug; re-export overwrites in place.
+// JSON + Markdown pair named `<tactic-id>-<slug>.{json,md}` —
+// deterministic and idempotent, so re-export overwrites in place.
+// The enclosing directory is the backend's concern (the local
+// backend's root, or the S3 key prefix), so paths aren't doubled.
 package export
 
 import (
@@ -73,7 +75,7 @@ func (s *Service) writeDocs(ctx context.Context, docs []store.KnowledgeDoc) (int
 	var firstErr error
 	written := 0
 	for _, d := range docs {
-		base := "knowledge/" + d.TacticID
+		base := d.TacticID
 		if slug := knowledge.Slug(d.Title); slug != "" {
 			base += "-" + slug
 		}
