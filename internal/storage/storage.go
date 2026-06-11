@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"github.com/nlink-jp/ir-hub/internal/config"
+	"github.com/nlink-jp/ir-hub/internal/storage/gcs"
 	"github.com/nlink-jp/ir-hub/internal/storage/local"
 )
 
@@ -23,15 +24,22 @@ type Backend interface {
 	Name() string
 }
 
+// Compile-time conformance for every backend implementation.
+var (
+	_ Backend = (*local.Backend)(nil)
+	_ Backend = (*gcs.Backend)(nil)
+)
+
 // New constructs the backend named by cfg.Backend. A cloud backend
 // whose client cannot be created (missing credentials, off-cloud)
 // returns an error so the caller can degrade gracefully rather than
-// crashing the bot. The gcs and s3 cases are wired in their own
-// commits.
+// crashing the bot. The s3 case is wired in its own commit.
 func New(ctx context.Context, cfg config.StorageConfig) (Backend, error) {
 	switch cfg.Backend {
 	case "local":
 		return local.New(cfg.LocalPath), nil
+	case "gcs":
+		return gcs.New(ctx, cfg.GCSBucket)
 	default:
 		return nil, fmt.Errorf("storage: backend %q not available", cfg.Backend)
 	}
