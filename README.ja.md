@@ -6,11 +6,11 @@
 
 [English README is here](README.md)
 
-> **Status: pre-release.** Phase 1–2 を実装済み: 案件ライフサイクル管理に
-> 加え、LLM ポストモーテム(クローズ時自動+再実行可)、LLM 状況サマリ、
-> 知見ドキュメント生成。知見の再利用(Q&A・ブリーフィング・ストレージ
-> 出力)は Phase 3 で追加されます。承認済み設計は
-> [RFP](docs/ja/ir-hub-rfp.ja.md) を参照。
+> **Status: 機能完成(Phase 1–3)。** 案件ライフサイクル管理、LLM
+> ポストモーテム(クローズ時自動+再実行可)、LLM 状況サマリ、知見
+> ドキュメント生成に加え、知見の再利用 — `@ir-hub` Q&A、初動
+> ブリーフィング、プラガブルなストレージ出力(local / GCS / S3)。
+> 承認済み設計は [RFP](docs/ja/ir-hub-rfp.ja.md) を参照。
 
 ## コンセプト
 
@@ -33,6 +33,10 @@
 - **知見ドキュメント** — 抽出タクティックごとに JSON + Markdown ペアを生成し、
   ポストモーテム確定時に DB へインデックス(タグ / カテゴリ / 要約)登録。
   再実行で当該案件の知見は置換
+- **知見の再利用** — `@ir-hub <質問>` で蓄積知見から回答(タクティック ID を
+  引用)、`/ir-hub new` 時に関連する過去タクティックをブリーフィング投稿、
+  知見を JSON + Markdown で local / GCS / S3 にエクスポート(`/ir-hub export`
+  およびポストモーテム後に自動)。IR チーム外も参照可能
 - **デュアルモードのスラッシュコマンド** — 引数ありで直接実行、引数なしの
   `/ir-hub` はモーダルから操作を選択
 - **ACL 内蔵** — ユーザー ID 単位+Slack User Group 単位の Whitelist +
@@ -52,7 +56,8 @@
 | `/ir-hub status` | 案件メタデータに続けて LLM 状況サマリ(現状 / 未解決事項 / 次アクション)を投稿 |
 | `/ir-hub close` | 案件をクローズし、ポストモーテムを自動実行(案件チャネル内で実行) |
 | `/ir-hub pm` | ポストモーテムを手動(再)実行 — 当該案件の知見ドキュメントを置換 |
-| `@ir-hub <質問>` | 知見 Q&A — 回答は Phase 3 から。現状は案内を返信 |
+| `/ir-hub export` | 全知見ドキュメントを設定済みストレージにエクスポート |
+| `@ir-hub <質問>` | 知見 Q&A — 蓄積知見から回答(タクティック ID を引用) |
 
 ポストモーテムはコンパクトな要約(重要度、プロセススコア、良かった点/
 改善点ダイジェスト、タクティック数)を投稿し、全文 Markdown レポートを
@@ -65,6 +70,9 @@
 - Vertex AI API を有効化した GCP プロジェクトと Application Default
   Credentials(`gcloud auth application-default login`)—
   ポストモーテムと状況サマリは Gemini で実行されます
+- 知見エクスポート用: ローカルディレクトリ(既定)、または GCS バケット
+  (ADC)/ S3 バケット(AWS 既定認証チェーン)。クラウドクライアントが
+  初期化できない場合はエクスポートを無効化して Bot は稼働継続します
 
 ## Slack アプリの設定
 
@@ -193,6 +201,24 @@ ir-hub serve
 Bot は自動再接続し、再接続後は `conversations.history` から取りこぼしを
 backfill します。
 
+## 知見エクスポート
+
+`[storage]` でバックエンドを設定します。知見ドキュメントは
+`knowledge/<タクティック ID>-<slug>.json` / `.md` のペアとして、手動
+(`/ir-hub export`)とポストモーテム後の自動の両方で書き出されます。
+
+```toml
+[storage]
+backend    = "local"          # local | gcs | s3
+local_path = "./knowledge"
+# gcs_bucket = "my-ir-knowledge"        # backend = "gcs"(ADC 使用)
+# s3_bucket  = "my-ir-knowledge"        # backend = "s3"(AWS 既定チェーン)
+# s3_prefix  = "ir-hub/"
+```
+
+GCS は Application Default Credentials、S3 は AWS 既定認証チェーンを
+使用します。再エクスポートは決定的パスで上書きします。
+
 ## 既知の制限
 
 - **メッセージの編集・削除は取り込まれません**(`message_changed` /
@@ -207,8 +233,12 @@ backfill します。
   その旨を明記します。
 - **レポート・知見ドキュメント内の参加者は Slack ユーザー ID 表記**です
   (表示名解決は未対応)。
-- 知見の再利用(`@ir-hub` Q&A、初動ブリーフィング、ストレージ出力)は
-  Phase 3 で追加されます。
+- **知見検索はタグ/キーワード(LIKE)絞り込み**でベクトル検索ではありません。
+  数百件規模に適しており、それ以上の規模では FTS や embedding が望ましく
+  なります。
+- **再エクスポートしたオブジェクトが孤立し得ます**: ポストモーテム再実行で
+  タクティック ID が新しくなるため、前回エクスポート分が手動削除まで
+  ストレージに残る場合があります。
 
 ## ビルド
 

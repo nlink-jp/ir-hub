@@ -50,9 +50,11 @@ ir-hub/
 │   ├── sanitize/           # advisory injection-pattern detection
 │   ├── llm/                # LLM Client boundary + Vertex AI adapter
 │   │   └── llmtest/        # marker-routed fake for pipeline tests
-│   ├── analysis/           # 5-stage postmortem, status summary, translation
+│   ├── analysis/           # postmortem + status + Q&A (reuse.go) + briefing
 │   ├── knowledge/          # tactic → JSON+MD pair, slugs
-│   └── bot/                # socketmode loop, ack/dedup/dispatch/shutdown, PM wiring
+│   ├── storage/            # Backend iface + local/gcs/s3 + storagetest fake
+│   ├── export/             # knowledge export service (store → storage)
+│   └── bot/                # socketmode loop, ack/dedup/dispatch/shutdown, PM/Q&A/export wiring
 ├── scripts/                # codesign / notarize (org templates, verbatim)
 ├── config.example.toml     # copy to ~/.config/ir-hub/config.toml
 ├── docs/
@@ -61,15 +63,18 @@ ir-hub/
 ```
 
 Dependency direction: `bot → {acl, cases, modal, ingest, command,
-analysis (Analyzer interface), knowledge}`; `analysis → {llm,
-defang, sanitize, knowledge, store, msg}`; `cases/ingest/acl →
-slackapi (interface) + store`. No package-level singletons —
-everything is constructor-injected, clocks via `func() time.Time`,
-waiting via a small Sleeper interface.
+analysis (Analyzer interface), export (Exporter interface),
+knowledge}`; `analysis → {llm, defang, sanitize, knowledge, store,
+msg}`; `export → {store, storage, knowledge}`; `storage → config`;
+`cases/ingest/acl → slackapi (interface) + store`. No package-level
+singletons — everything is constructor-injected, clocks via
+`func() time.Time`, waiting via a small Sleeper interface.
 
-Planned for Phase 3: storage export backends (local/GCS/S3) and the
-knowledge Q&A / briefing retrieval (FTS + tags → full-text context
-load — NO chunk+vector RAG, see CLAUDE.md).
+Knowledge retrieval (RFP): index at PM finalization (tags / category
+/ summary), narrow via tag + keyword LIKE (`store.SearchKnowledge`),
+load the narrowed docs' full text into the context — NO chunk+vector
+RAG (see CLAUDE.md). FTS / embeddings are a future option if the
+corpus outgrows LIKE.
 
 ## Configuration model
 
@@ -151,3 +156,15 @@ After Phase 3 completes:
   idempotent on already-defanged forms.
 - **FinalizePMRun holds the single SQLite connection's write tx** —
   never put LLM calls inside it; build everything first.
+- **Chained background work must run inline, not re-dispatched** —
+  close→PM and new→briefing run inside the already-dispatched
+  goroutine. A nested `dispatch()` is skipped once `Wait()` sets
+  draining, so the follow-up would silently never run.
+- **Q&A / briefing inputs are nonce-wrapped too** — the mention
+  question (user input) and the knowledge docs/summaries
+  (LLM-derived from user content) all go through `guard.Tag.Wrap`,
+  defang first, preamble first. Treat them as untrusted.
+- **Storage degrades, never crashes** — `storage.New` failure at
+  serve is logged and export is left disabled (nil Exporter); the
+  bot still runs. Auto-export failure after a PM is logged only,
+  never fails the postmortem.

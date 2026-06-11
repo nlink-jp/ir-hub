@@ -59,6 +59,9 @@ Schema: see `config.example.toml` — sections `[gcp]`, `[model]`,
 - `github.com/nlink-jp/nlk` — `guard` (nonce tags) / `backoff`
   (LLM retries) / `jsonfix` (tolerant JSON) / `strip` (think tags);
   verify API signatures against the real files before use
+- `cloud.google.com/go/storage` (GCS export, ADC) and
+  `github.com/aws/aws-sdk-go-v2/{config,service/s3}` (S3 export,
+  default credential chain) — both pure Go; keep CGO_ENABLED=0
 
 ## Design constraints (from the RFP — canonical scope source)
 

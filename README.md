@@ -7,12 +7,12 @@ accumulation and reuse.
 
 [日本語版 README はこちら](README.ja.md)
 
-> **Status: pre-release.** Phases 1–2 are implemented: case
-> lifecycle management plus LLM postmortems (auto on close,
-> re-runnable), LLM status summaries, and knowledge-document
-> generation. Knowledge reuse (Q&A, briefings, storage export)
-> arrives in Phase 3. See the [RFP](docs/en/ir-hub-rfp.md) for the
-> approved design.
+> **Status: feature-complete (Phases 1–3).** Case lifecycle
+> management, LLM postmortems (auto on close, re-runnable), LLM
+> status summaries, knowledge-document generation, and knowledge
+> reuse — `@ir-hub` Q&A, new-case briefings, and pluggable storage
+> export (local / GCS / S3). See the [RFP](docs/en/ir-hub-rfp.md)
+> for the approved design.
 
 ## Concept
 
@@ -37,6 +37,11 @@ accumulation and reuse.
 - **Knowledge documents** — each extracted tactic becomes a JSON +
   Markdown pair, indexed (tags / category / summary) in the DB at
   postmortem finalization; re-runs replace a case's knowledge
+- **Knowledge reuse** — `@ir-hub <question>` answers from accumulated
+  knowledge (citing tactic IDs); `/ir-hub new` posts a briefing of
+  relevant past tactics; knowledge is exported as JSON + Markdown to
+  local / GCS / S3 storage (`/ir-hub export` and automatically after
+  each postmortem) for teams outside IR to consume
 - **Dual-mode slash command** — pass arguments for direct execution,
   or run bare `/ir-hub` to pick the action from a modal
 - **ACL built in** — whitelist + blacklist by user ID and by Slack
@@ -58,7 +63,8 @@ accumulation and reuse.
 | `/ir-hub status` | Post case metadata followed by an LLM situation summary (current status / open items / next actions) |
 | `/ir-hub close` | Close the case and run the postmortem automatically (inside the case channel) |
 | `/ir-hub pm` | Run (or re-run) the postmortem manually — replaces the case's knowledge documents |
-| `@ir-hub <question>` | Knowledge Q&A — answers arrive in Phase 3; for now replies with a notice |
+| `/ir-hub export` | Export all knowledge documents to the configured storage backend |
+| `@ir-hub <question>` | Knowledge Q&A — answers from accumulated knowledge, citing tactic IDs |
 
 The postmortem posts a compact summary (severity, process score,
 strengths/improvements digest, tactic count) and attaches the full
@@ -71,6 +77,10 @@ Markdown report as a snippet.
 - A GCP project with the Vertex AI API enabled and Application
   Default Credentials (`gcloud auth application-default login`) —
   the postmortem and status analyses run on Gemini
+- For knowledge export: a local directory (default), or a GCS bucket
+  (ADC) / S3 bucket (default AWS credential chain). If the cloud
+  client can't initialize, export is disabled and the bot keeps
+  running.
 
 ## Slack app setup
 
@@ -199,6 +209,26 @@ ir-hub serve
 The bot reconnects automatically; after each reconnect it backfills
 missed messages from `conversations.history`.
 
+## Knowledge export
+
+Configure the storage backend in `[storage]`. Knowledge documents
+are written as `knowledge/<tactic-id>-<slug>.json` and `.md` pairs,
+both manually (`/ir-hub export`) and automatically after each
+postmortem.
+
+```toml
+[storage]
+backend    = "local"          # local | gcs | s3
+local_path = "./knowledge"
+# gcs_bucket = "my-ir-knowledge"        # backend = "gcs" (uses ADC)
+# s3_bucket  = "my-ir-knowledge"        # backend = "s3" (default AWS chain)
+# s3_prefix  = "ir-hub/"
+```
+
+GCS uses Application Default Credentials; S3 uses the default AWS
+credential chain. Re-exports overwrite in place by deterministic
+path.
+
 ## Known limitations
 
 - **Message edits/deletions are not ingested** (`message_changed` /
@@ -213,8 +243,12 @@ missed messages from `conversations.history`.
   budget are analyzed and the truncation is noted in the report.
 - **Participants appear as Slack user IDs** in reports and knowledge
   documents (no display-name resolution yet).
-- Knowledge reuse (`@ir-hub` Q&A, initial briefings, storage export)
-  arrives in Phase 3.
+- **Knowledge retrieval uses tag/keyword (LIKE) narrowing**, not
+  vector search — well-suited to hundreds of documents; a larger
+  corpus would warrant FTS or embeddings.
+- **Re-exported objects can orphan**: a postmortem re-run assigns
+  fresh tactic IDs, so a previous run's exported objects may remain
+  in storage until manually cleaned.
 
 ## Building
 

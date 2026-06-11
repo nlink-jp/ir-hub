@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Phase 3: knowledge reuse + storage export.**
+  - `@ir-hub <question>`: knowledge Q&A — narrows accumulated
+    knowledge by the question's words, loads the candidates into
+    context, and answers citing tactic IDs (with the current case
+    conversation as extra context inside a case channel)
+  - `/ir-hub new`: posts an initial briefing of relevant past
+    tactics after the kickoff (silent on an empty corpus or when
+    nothing is relevant); the LLM selects from all knowledge
+    summaries, narrowing by title when over budget
+  - Pluggable storage export (`internal/storage`: local / GCS / S3)
+    of knowledge JSON + Markdown pairs; `/ir-hub export` writes all
+    knowledge and each postmortem auto-exports its case. Paths are
+    deterministic (`knowledge/<tactic-id>-<slug>.{json,md}`)
+  - GCS uses ADC (`cloud.google.com/go/storage`); S3 uses the
+    default AWS credential chain (`aws-sdk-go-v2`, the org's first
+    AWS SDK). A cloud client that can't initialize degrades
+    gracefully — export is disabled, the bot keeps running
+  - Security: Q&A questions, knowledge docs, and briefing summaries
+    are all nonce-wrapped (user + LLM-derived content); the defense
+    preamble stays first and output is defanged
+  - Store: cross-case readers (`ListAllKnowledge`, parameterized
+    `SearchKnowledge`); schema v3 adds a category index
+  - Config: `gcs_bucket` / `s3_bucket` required for the matching
+    backend; `IRHUB_STORAGE_*` env overrides
+
 ## [0.2.0] - 2026-06-11
 
 ### Added
