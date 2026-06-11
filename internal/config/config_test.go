@@ -301,6 +301,56 @@ func TestValidateServe(t *testing.T) {
 	}
 }
 
+func TestValidateServeStorage(t *testing.T) {
+	base := func() *Config {
+		c := defaults()
+		c.Slack = SlackConfig{AppToken: "xapp-1-X", BotToken: "xoxb-X"}
+		c.GCP.Project = "p"
+		return c
+	}
+
+	gcs := base()
+	gcs.Storage.Backend = "gcs"
+	if err := gcs.ValidateServe(); err == nil || !strings.Contains(err.Error(), "gcs_bucket") {
+		t.Errorf("gcs without bucket: err = %v", err)
+	}
+	gcs.Storage.GCSBucket = "my-bucket"
+	if err := gcs.ValidateServe(); err != nil {
+		t.Errorf("gcs with bucket: %v", err)
+	}
+
+	s3 := base()
+	s3.Storage.Backend = "s3"
+	if err := s3.ValidateServe(); err == nil || !strings.Contains(err.Error(), "s3_bucket") {
+		t.Errorf("s3 without bucket: err = %v", err)
+	}
+	s3.Storage.S3Bucket = "my-bucket"
+	if err := s3.ValidateServe(); err != nil {
+		t.Errorf("s3 with bucket: %v", err)
+	}
+
+	// local needs nothing extra.
+	if err := base().ValidateServe(); err != nil {
+		t.Errorf("local backend: %v", err)
+	}
+}
+
+func TestStorageEnvOverrides(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("IRHUB_STORAGE_BACKEND", "s3")
+	t.Setenv("IRHUB_STORAGE_S3_BUCKET", "ir-knowledge")
+	t.Setenv("IRHUB_STORAGE_S3_PREFIX", "exports/")
+	t.Setenv("IRHUB_STORAGE_GCS_BUCKET", "gcs-knowledge")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Storage.Backend != "s3" || cfg.Storage.S3Bucket != "ir-knowledge" ||
+		cfg.Storage.S3Prefix != "exports/" || cfg.Storage.GCSBucket != "gcs-knowledge" {
+		t.Errorf("storage = %+v", cfg.Storage)
+	}
+}
+
 func TestAnalysisDefaultsAndEnv(t *testing.T) {
 	clearEnv(t)
 	cfg, err := Load("")

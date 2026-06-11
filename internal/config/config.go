@@ -201,6 +201,9 @@ func applyEnvOverrides(cfg *Config) {
 	parseIntEnv(&cfg.Analysis.MaxInputTokens, "IRHUB_ANALYSIS_MAX_INPUT_TOKENS")
 	setStr(&cfg.Storage.Backend, "IRHUB_STORAGE_BACKEND")
 	setStr(&cfg.Storage.LocalPath, "IRHUB_STORAGE_LOCAL_PATH")
+	setStr(&cfg.Storage.GCSBucket, "IRHUB_STORAGE_GCS_BUCKET")
+	setStr(&cfg.Storage.S3Bucket, "IRHUB_STORAGE_S3_BUCKET")
+	setStr(&cfg.Storage.S3Prefix, "IRHUB_STORAGE_S3_PREFIX")
 	setStr(&cfg.DB.Path, "IRHUB_DB_PATH")
 	setStr(&cfg.Slack.AppToken, "IRHUB_SLACK_APP_TOKEN")
 	setStr(&cfg.Slack.BotToken, "IRHUB_SLACK_BOT_TOKEN")
@@ -305,6 +308,16 @@ func (c *Config) ValidateServe() error {
 	}
 	if c.GCP.Project == "" {
 		return fmt.Errorf("gcp.project is required for LLM analysis (set [gcp] project in config.toml or IRHUB_GCP_PROJECT)")
+	}
+	switch c.Storage.Backend {
+	case "gcs":
+		if c.Storage.GCSBucket == "" {
+			return fmt.Errorf("storage.gcs_bucket is required when storage.backend=gcs")
+		}
+	case "s3":
+		if c.Storage.S3Bucket == "" {
+			return fmt.Errorf("storage.s3_bucket is required when storage.backend=s3")
+		}
 	}
 	return nil
 }

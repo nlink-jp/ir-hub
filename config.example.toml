@@ -64,7 +64,12 @@ max_input_tokens = 200000
 
 [storage]
 # Where finalized knowledge documents (JSON + Markdown pairs) are
-# exported. One of: local, gcs, s3.
+# exported (manually via /ir-hub export, and automatically after
+# each postmortem). One of: local, gcs, s3.
+#   gcs requires gcs_bucket and Application Default Credentials.
+#   s3 requires s3_bucket and the default AWS credential chain.
+# If the cloud client cannot initialize at startup, export is
+# disabled (logged) and the bot keeps running.
 backend    = "local"
 local_path = "./knowledge"
 # gcs_bucket = "BUCKET_NAME"
