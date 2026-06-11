@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - The postmortem progress message is now edited in place as each
     of the 5 stages completes (`Analyzing… (N/5 stages complete)`),
     so responders can see the multi-minute analysis advancing
+  - Slack user IDs are resolved to `display name (ID)` everywhere
+    they are stored or exported — postmortem reports, knowledge
+    documents, and `/ir-hub status` — so records identify people,
+    not opaque IDs. Resolution runs after the LLM (names never enter
+    prompts) and falls back to the raw ID on lookup failure
   - Q&A acknowledges a question immediately with a 👀 reaction
     (removed once the answer posts), since the LLM call takes
     several seconds — requires the new `reactions:write` scope

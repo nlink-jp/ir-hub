@@ -23,6 +23,7 @@ import (
 	"github.com/nlink-jp/ir-hub/internal/slackapi"
 	"github.com/nlink-jp/ir-hub/internal/storage"
 	"github.com/nlink-jp/ir-hub/internal/store"
+	"github.com/nlink-jp/ir-hub/internal/userdir"
 )
 
 var serveCmd = &cobra.Command{
@@ -86,11 +87,14 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	}
 
 	catalog := msg.For(cfg.Language)
+	// Resolves Slack user IDs to "display name (ID)" in status,
+	// postmortems, and knowledge documents.
+	resolver := userdir.New(api)
 	caseSvc := cases.New(api, st, cases.Config{
 		DefaultVisibility: cfg.Channel.DefaultVisibility,
 		NamePrefix:        cfg.Channel.NamePrefix,
 		Msg:               catalog,
-	})
+	}, cases.WithResolver(resolver))
 	ing := ingest.New(api, st)
 
 	llmClient, err := llm.NewVertex(ctx, cfg.GCP.Project, cfg.GCP.Location, cfg.Model.Name,
@@ -102,7 +106,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		Language:       cfg.Language,
 		BotUserID:      ident.UserID,
 		MaxInputTokens: cfg.Analysis.MaxInputTokens,
-	})
+	}, analysis.WithResolver(resolver))
 
 	// Postmortem runs interrupted by a previous shutdown stay
 	// 'running' forever otherwise.

@@ -54,6 +54,7 @@ ir-hub/
 │   ├── knowledge/          # tactic → JSON+MD pair, slugs
 │   ├── storage/            # Backend iface + local/gcs/s3 + storagetest fake
 │   ├── export/             # knowledge export service (store → storage)
+│   ├── userdir/            # user ID → "display name (ID)" resolver (cached)
 │   └── bot/                # socketmode loop, ack/dedup/dispatch/shutdown, PM/Q&A/export wiring
 ├── scripts/                # codesign / notarize (org templates, verbatim)
 ├── config.example.toml     # copy to ~/.config/ir-hub/config.toml
@@ -66,7 +67,8 @@ Dependency direction: `bot → {acl, cases, modal, ingest, command,
 analysis (Analyzer interface), export (Exporter interface),
 knowledge}`; `analysis → {llm, defang, sanitize, knowledge, store,
 msg}`; `export → {store, storage, knowledge}`; `storage → config`;
-`cases/ingest/acl → slackapi (interface) + store`. No package-level
+`cases/ingest/acl → slackapi (interface) + store`;
+`userdir → slackapi`; `analysis/cases → userdir`. No package-level
 singletons — everything is constructor-injected, clocks via
 `func() time.Time`, waiting via a small Sleeper interface.
 
@@ -168,3 +170,9 @@ After Phase 3 completes:
   serve is logged and export is left disabled (nil Exporter); the
   bot still runs. Auto-export failure after a PM is logged only,
   never fails the postmortem.
+- **User-name resolution runs AFTER the LLM** — `userdir` resolves
+  `display (ID)` post-analysis (in `analysis.resolveReport` and
+  `cases.Status`). Never put names into a prompt. report.go renders
+  the resolved string directly (no `<@ID>` — that reverts to a raw
+  ID in the stored/exported copy). Resolver is nil-safe (raw ID
+  fallback), so tests pass without one.

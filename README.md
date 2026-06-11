@@ -243,8 +243,6 @@ path.
 - **Very long cases are truncated for analysis**: when a case
   exceeds `analysis.max_input_tokens`, the newest messages within
   budget are analyzed and the truncation is noted in the report.
-- **Participants appear as Slack user IDs** in reports and knowledge
-  documents (no display-name resolution yet).
 - **Knowledge retrieval uses tag/keyword (LIKE) narrowing**, not
   vector search — well-suited to hundreds of documents; a larger
   corpus would warrant FTS or embeddings.
