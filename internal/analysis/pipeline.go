@@ -21,6 +21,7 @@ import (
 	"github.com/nlink-jp/ir-hub/internal/knowledge"
 	"github.com/nlink-jp/ir-hub/internal/llm"
 	"github.com/nlink-jp/ir-hub/internal/store"
+	"github.com/nlink-jp/ir-hub/internal/userdir"
 )
 
 // Config carries the runner settings.
@@ -37,11 +38,12 @@ type Config struct {
 
 // Runner executes analyses.
 type Runner struct {
-	llm   llm.Client
-	store *store.Store
-	cfg   Config
-	logf  func(format string, v ...any)
-	now   func() time.Time
+	llm      llm.Client
+	store    *store.Store
+	cfg      Config
+	logf     func(format string, v ...any)
+	now      func() time.Time
+	resolver *userdir.Resolver
 }
 
 // Option configures a Runner.
@@ -55,6 +57,12 @@ func WithLogger(logf func(format string, v ...any)) Option {
 // WithClock injects a deterministic clock for tests.
 func WithClock(now func() time.Time) Option {
 	return func(r *Runner) { r.now = now }
+}
+
+// WithResolver injects a user-ID → display-name resolver. Without
+// it, reports keep raw Slack IDs.
+func WithResolver(res *userdir.Resolver) Option {
+	return func(r *Runner) { r.resolver = res }
 }
 
 // NewRunner creates a Runner.
@@ -161,7 +169,7 @@ func (r *Runner) RunPostmortem(ctx context.Context, c *store.Case, progress func
 	}
 	tick()
 
-	return &Report{
+	rep := &Report{
 		CaseID:           c.ID,
 		Channel:          "#" + c.ChannelName,
 		Summary:          *summary,
@@ -174,7 +182,11 @@ func (r *Runner) RunPostmortem(ctx context.Context, c *store.Case, progress func
 		AnalyzedMessages: in.Analyzed,
 		Truncated:        in.Truncated,
 		GeneratedAt:      r.now().UTC().Format(time.RFC3339),
-	}, nil
+	}
+	// Resolve Slack user IDs to "display (ID)" after the LLM, so the
+	// stored report and knowledge identify people, not opaque IDs.
+	r.resolveReport(ctx, rep)
+	return rep, nil
 }
 
 func (r *Runner) stageSummary(ctx context.Context, in *Input) (*Summary, error) {

@@ -89,7 +89,7 @@ func RenderMarkdown(rep *Report, cat *msg.Catalog) string {
 		w(cat.RptActivity)
 		for _, p := range rep.Activity.Participants {
 			w("")
-			w("### <@%s>", p.UserName)
+			w("### %s", p.UserName)
 			for _, a := range p.Actions {
 				w("- [%s] %s — %s", a.Timestamp, a.Purpose, a.Findings)
 				if a.Method != "" {
@@ -104,7 +104,7 @@ func RenderMarkdown(rep *Report, cat *msg.Catalog) string {
 		w(cat.RptRoles)
 		w("")
 		for _, role := range rep.Roles.Roles {
-			w("- <@%s> — %s (%s)", role.UserName, role.InferredRole, role.Confidence)
+			w("- %s — %s (%s)", role.UserName, role.InferredRole, role.Confidence)
 		}
 	}
 
