@@ -25,6 +25,8 @@ type API interface {
 	PostEphemeral(ctx context.Context, channelID, userID string, opts ...slack.MsgOption) error
 	// OpenView opens a modal for the trigger ID (3-second validity).
 	OpenView(ctx context.Context, triggerID string, view slack.ModalViewRequest) error
+	// GetUserInfo resolves a user ID to its profile (display name).
+	GetUserInfo(ctx context.Context, userID string) (*slack.User, error)
 	// GetUserGroups lists the workspace's user groups.
 	GetUserGroups(ctx context.Context) ([]slack.UserGroup, error)
 	// GetUserGroupMembers lists member user IDs of a user group.
@@ -83,6 +85,10 @@ func (a *Adapter) PostEphemeral(ctx context.Context, channelID, userID string, o
 func (a *Adapter) OpenView(ctx context.Context, triggerID string, view slack.ModalViewRequest) error {
 	_, err := a.c.OpenViewContext(ctx, triggerID, view)
 	return err
+}
+
+func (a *Adapter) GetUserInfo(ctx context.Context, userID string) (*slack.User, error) {
+	return a.c.GetUserInfoContext(ctx, userID)
 }
 
 func (a *Adapter) GetUserGroups(ctx context.Context) ([]slack.UserGroup, error) {

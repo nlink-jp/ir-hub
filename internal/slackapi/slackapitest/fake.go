@@ -21,6 +21,7 @@ type Fake struct {
 	PostMessageFn            func(ctx context.Context, channelID string, opts ...slack.MsgOption) (string, error)
 	PostEphemeralFn          func(ctx context.Context, channelID, userID string, opts ...slack.MsgOption) error
 	OpenViewFn               func(ctx context.Context, triggerID string, view slack.ModalViewRequest) error
+	GetUserInfoFn            func(ctx context.Context, userID string) (*slack.User, error)
 	GetUserGroupsFn          func(ctx context.Context) ([]slack.UserGroup, error)
 	GetUserGroupMembersFn    func(ctx context.Context, groupID string) ([]string, error)
 	GetConversationHistoryFn func(ctx context.Context, params *slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error)
@@ -88,6 +89,16 @@ func (f *Fake) OpenView(ctx context.Context, triggerID string, view slack.ModalV
 		return f.OpenViewFn(ctx, triggerID, view)
 	}
 	return nil
+}
+
+func (f *Fake) GetUserInfo(ctx context.Context, userID string) (*slack.User, error) {
+	f.record("GetUserInfo:" + userID)
+	if f.GetUserInfoFn != nil {
+		return f.GetUserInfoFn(ctx, userID)
+	}
+	// Default: a user whose display name echoes the ID, so tests
+	// that don't care about names still get deterministic output.
+	return &slack.User{ID: userID, Name: userID}, nil
 }
 
 func (f *Fake) GetUserGroups(ctx context.Context) ([]slack.UserGroup, error) {

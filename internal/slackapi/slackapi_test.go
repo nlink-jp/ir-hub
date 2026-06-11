@@ -89,6 +89,23 @@ func TestUploadFile(t *testing.T) {
 	}
 }
 
+func TestGetUserInfo(t *testing.T) {
+	a, forms, _ := newTestAdapter(t, map[string]string{
+		"/users.info": `{"ok": true, "user": {"id": "U1", "name": "alice",
+			"real_name": "Alice Smith", "profile": {"display_name": "ali"}}}`,
+	})
+	u, err := a.GetUserInfo(context.Background(), "U1")
+	if err != nil {
+		t.Fatalf("GetUserInfo: %v", err)
+	}
+	if u.ID != "U1" || u.Profile.DisplayName != "ali" || u.RealName != "Alice Smith" {
+		t.Errorf("user = %+v", u)
+	}
+	if got := (*forms)["/users.info"].Get("user"); got != "U1" {
+		t.Errorf("users.info user param = %q", got)
+	}
+}
+
 func TestReactions(t *testing.T) {
 	a, got, _ := newTestAdapter(t, nil)
 	if err := a.AddReaction(context.Background(), "eyes", "C1", "1718000000.000100"); err != nil {
