@@ -160,6 +160,26 @@ func (s *Service) Close(ctx context.Context, channelID, closedBy string) (*store
 	return s.store.CaseByID(c.ID)
 }
 
+// Reopen transitions the closed case bound to channelID back to open
+// and posts a note.
+func (s *Service) Reopen(ctx context.Context, channelID, reopenedBy string) (*store.Case, error) {
+	c, err := s.store.CaseByChannel(channelID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, ErrNotCaseChannel
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := s.store.ReopenCase(c.ID); err != nil {
+		return nil, err
+	}
+	if _, err := s.api.PostMessage(ctx, channelID, slack.MsgOptionText(
+		s.cfg.Msg.F(s.cfg.Msg.CaseReopened, c.ID, reopenedBy), false)); err != nil {
+		return nil, fmt.Errorf("case reopened but posting the note failed: %w", err)
+	}
+	return s.store.CaseByID(c.ID)
+}
+
 // Status returns a human-readable metadata summary (mrkdwn) for the
 // case bound to channelID.
 func (s *Service) Status(ctx context.Context, channelID string) (string, error) {

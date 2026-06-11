@@ -62,6 +62,7 @@ accumulation and reuse.
 | `/ir-hub new <title> [--severity low\|medium\|high\|critical] [--private\|--public]` | Create the case channel, invite you, post a kickoff message |
 | `/ir-hub status` | Post case metadata followed by an LLM situation summary (current status / open items / next actions) |
 | `/ir-hub close` | Close the case and run the postmortem automatically (inside the case channel) |
+| `/ir-hub reopen` | Reopen a closed case (resumes message ingestion) |
 | `/ir-hub pm` | Run (or re-run) the postmortem manually — replaces the case's knowledge documents |
 | `/ir-hub export` | Export all knowledge documents to the configured storage backend |
 | `@ir-hub <question>` | Knowledge Q&A — answers from accumulated knowledge, citing tactic IDs |

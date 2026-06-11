@@ -68,7 +68,7 @@ type ParseError struct {
 func (e *ParseError) Error() string {
 	switch e.Kind {
 	case ErrKindUnknownSubcommand:
-		return fmt.Sprintf("unknown subcommand %q (expected: new, close, status, pm, export)", e.Arg)
+		return fmt.Sprintf("unknown subcommand %q (expected: new, close, reopen, status, pm, export)", e.Arg)
 	case ErrKindTakesNoArgs:
 		return fmt.Sprintf("%q takes no arguments", e.Arg)
 	case ErrKindSeverityNeedsValue:
@@ -101,7 +101,7 @@ func Parse(text string) (Parsed, error) {
 			return Parsed{}, err
 		}
 		return Parsed{Sub: "new", New: args}, nil
-	case "close", "status", "pm", "export":
+	case "close", "reopen", "status", "pm", "export":
 		if len(rest) > 0 {
 			return Parsed{}, &ParseError{Kind: ErrKindTakesNoArgs, Arg: sub}
 		}

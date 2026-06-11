@@ -26,9 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     default AWS credential chain (`aws-sdk-go-v2`, the org's first
     AWS SDK). A cloud client that can't initialize degrades
     gracefully — export is disabled, the bot keeps running
+  - `/ir-hub reopen` (slash + modal) reopens a closed case
+    (closed → open, closure fields cleared), resuming message
+    ingestion; a subsequent close re-runs the postmortem
   - Q&A acknowledges a question immediately with a 👀 reaction
     (removed once the answer posts), since the LLM call takes
     several seconds — requires the new `reactions:write` scope
+  - Q&A resolves tactic IDs embedded in the question
+    (`tac-…の内容を見せて`) to the exact document
   - Q&A falls back to loading all knowledge when keyword narrowing
     matches nothing (e.g. a Japanese question against
     English-canonical knowledge)

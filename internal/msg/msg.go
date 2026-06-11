@@ -46,6 +46,7 @@ type Catalog struct {
 	KickoffCloseHint   string
 	KickoffPrivateNote string
 	CaseClosed         string // %04d case id, %s user id
+	CaseReopened       string // %04d case id, %s user id
 	WarnInviteFailed   string // %s user id, %v error
 	WarnKickoffFailed  string // %v error
 
@@ -66,9 +67,12 @@ type Catalog struct {
 	ModalOpenFailed   string
 	DeniedNotice      string
 	CloseFailed       string // %v error (already localized where possible)
+	ReopenFailed      string // %v error
 	StatusFailed      string // %v error
 	ErrNotCaseChannel string
 	ErrCaseNotOpen    string
+	ErrCaseNotClosed  string
+	ModalActionReopen string
 
 	// Knowledge Q&A + briefing.
 	MentionEmptyQuestion string
@@ -170,6 +174,7 @@ var EN = Catalog{
 	KickoffPrivateNote: "• This channel is *private*: it cannot be converted to public " +
 		"later, and ir-hub must remain a member to keep ingesting messages.",
 	CaseClosed:        ":white_check_mark: *Case #%04d closed* by <@%s>.",
+	CaseReopened:      ":arrows_counterclockwise: *Case #%04d reopened* by <@%s>.",
 	WarnInviteFailed:  "could not invite <@%s>: %v",
 	WarnKickoffFailed: "could not post kickoff message: %v",
 
@@ -189,9 +194,12 @@ var EN = Catalog{
 	DeniedNotice: "You are not authorized to use ir-hub. " +
 		"Contact the IR team if you believe this is a mistake.",
 	CloseFailed:       ":warning: close failed: %v",
+	ReopenFailed:      ":warning: reopen failed: %v",
 	StatusFailed:      ":warning: status failed: %v",
 	ErrNotCaseChannel: "this channel is not an ir-hub case channel",
 	ErrCaseNotOpen:    "this case is not open",
+	ErrCaseNotClosed:  "this case is not closed",
+	ModalActionReopen: "Reopen this case",
 
 	MentionEmptyQuestion: "Ask me a question, e.g. `@ir-hub how did we handle the last DB outage?`",
 	MentionAnswerFailed:  ":warning: knowledge Q&A failed: %v",
@@ -203,7 +211,7 @@ var EN = Catalog{
 	ExportFailed:        ":warning: export failed: %v",
 	ExportNotConfigured: "Storage export is not configured.",
 
-	ErrUnknownSubcommand:  "unknown subcommand %q (expected: new, close, status, pm, export)",
+	ErrUnknownSubcommand:  "unknown subcommand %q (expected: new, close, reopen, status, pm, export)",
 	ErrTakesNoArgs:        "%q takes no arguments",
 	ErrSeverityNeedsValue: "--severity requires a value (%s)",
 	ErrInvalidSeverity:    "invalid severity %q (expected: %s)",
@@ -273,6 +281,7 @@ var JA = Catalog{
 	KickoffPrivateNote: "• このチャネルは*プライベート*です: 後から public へは変更できません。" +
 		"メッセージ取り込み継続のため ir-hub をメンバーから外さないでください。",
 	CaseClosed:        ":white_check_mark: *案件 #%04d をクローズしました*(<@%s>)",
+	CaseReopened:      ":arrows_counterclockwise: *案件 #%04d を再オープンしました*(<@%s>)",
 	WarnInviteFailed:  "<@%s> を招待できませんでした: %v",
 	WarnKickoffFailed: "キックオフメッセージを投稿できませんでした: %v",
 
@@ -292,9 +301,12 @@ var JA = Catalog{
 	DeniedNotice: "ir-hub を利用する権限がありません。" +
 		"心当たりがない場合は IR チームへお問い合わせください。",
 	CloseFailed:       ":warning: クローズできませんでした: %v",
+	ReopenFailed:      ":warning: 再オープンできませんでした: %v",
 	StatusFailed:      ":warning: ステータスを取得できませんでした: %v",
 	ErrNotCaseChannel: "このチャネルは ir-hub の案件チャネルではありません",
 	ErrCaseNotOpen:    "この案件は open 状態ではありません",
+	ErrCaseNotClosed:  "この案件は closed 状態ではありません",
+	ModalActionReopen: "この案件を再オープン",
 
 	MentionEmptyQuestion: "質問を入力してください。例: `@ir-hub 前回の DB 障害はどう対応した?`",
 	MentionAnswerFailed:  ":warning: 知見 Q&A に失敗しました: %v",
@@ -306,7 +318,7 @@ var JA = Catalog{
 	ExportFailed:        ":warning: エクスポートに失敗しました: %v",
 	ExportNotConfigured: "ストレージ出力が設定されていません。",
 
-	ErrUnknownSubcommand:  "未知のサブコマンド %q です(利用可能: new, close, status, pm, export)",
+	ErrUnknownSubcommand:  "未知のサブコマンド %q です(利用可能: new, close, reopen, status, pm, export)",
 	ErrTakesNoArgs:        "%q は引数を取りません",
 	ErrSeverityNeedsValue: "--severity には値が必要です(%s)",
 	ErrInvalidSeverity:    "不正な重要度 %q です(利用可能: %s)",

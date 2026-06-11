@@ -66,6 +66,25 @@ func TestCaseLifecycle(t *testing.T) {
 	if err := s.CloseCase(c.ID, "U003"); !errors.Is(err, ErrNotOpen) {
 		t.Errorf("double close err = %v, want ErrNotOpen", err)
 	}
+
+	// Reopen clears the closure fields and returns to open.
+	if err := s.ReopenCase(c.ID); err != nil {
+		t.Fatalf("ReopenCase: %v", err)
+	}
+	got, _ = s.CaseByID(c.ID)
+	if got.State != StateOpen || got.ClosedBy != "" || !got.ClosedAt.IsZero() {
+		t.Errorf("reopened case = %+v, want open with cleared closure", got)
+	}
+
+	// Reopening an open case fails with ErrNotClosed.
+	if err := s.ReopenCase(c.ID); !errors.Is(err, ErrNotClosed) {
+		t.Errorf("reopen of open case err = %v, want ErrNotClosed", err)
+	}
+
+	// Can close again after reopen.
+	if err := s.CloseCase(c.ID, "U004"); err != nil {
+		t.Errorf("close after reopen: %v", err)
+	}
 }
 
 func TestFailCase(t *testing.T) {

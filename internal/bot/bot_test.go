@@ -1063,6 +1063,68 @@ func TestCloseTriggersPostmortem(t *testing.T) {
 	}
 }
 
+func TestReopenCommand(t *testing.T) {
+	var mu sync.Mutex
+	var posts []string
+	api := &slackapitest.Fake{
+		PostMessageFn: func(ctx context.Context, channelID string, opts ...slack.MsgOption) (string, error) {
+			_, values, _ := slack.UnsafeApplyMsgOptions("tok", channelID, "https://slack.test/api/", opts...)
+			mu.Lock()
+			posts = append(posts, values.Get("text"))
+			mu.Unlock()
+			return "1.1", nil
+		},
+	}
+	h := newHarness(t, api, Config{})
+	c := h.openCaseWithMessages(t, "C1", 2)
+	if err := h.store.CloseCase(c.ID, "U-OK"); err != nil {
+		t.Fatal(err)
+	}
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "C1", "reopen"))
+	h.bot.Wait()
+
+	got, _ := h.store.CaseByID(c.ID)
+	if got.State != store.StateOpen {
+		t.Errorf("state = %q, want open after reopen", got.State)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, p := range posts {
+		if strings.Contains(p, "reopened") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("reopen note not posted: %v", posts)
+	}
+}
+
+func TestReopenNotClosed(t *testing.T) {
+	var mu sync.Mutex
+	var responses []string
+	api := &slackapitest.Fake{
+		PostResponseFn: func(ctx context.Context, url, text string) error {
+			mu.Lock()
+			responses = append(responses, text)
+			mu.Unlock()
+			return nil
+		},
+	}
+	h := newHarness(t, api, Config{})
+	h.openCaseWithMessages(t, "C1", 1) // open, not closed
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "C1", "reopen"))
+	h.bot.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(responses) != 1 || !strings.Contains(responses[0], "not closed") {
+		t.Errorf("responses = %v, want not-closed error", responses)
+	}
+}
+
 func TestPMFailureRecordedAndPosted(t *testing.T) {
 	var mu sync.Mutex
 	var posts []string

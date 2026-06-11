@@ -297,6 +297,8 @@ func (b *Bot) handleSlash(ctx context.Context, cmd slack.SlashCommand) {
 		b.runClose(ctx, cmd.ChannelID, cmd.UserID, cmd.ResponseURL)
 	case "status":
 		b.runStatus(ctx, cmd.ChannelID, cmd.UserID, cmd.ResponseURL)
+	case "reopen":
+		b.runReopen(ctx, cmd.ChannelID, cmd.UserID, cmd.ResponseURL)
 	case "pm":
 		b.runPM(ctx, cmd.ChannelID, cmd.UserID, cmd.ResponseURL)
 	case "export":
@@ -358,6 +360,9 @@ func (b *Bot) handleInteractive(ctx context.Context, req socketmode.Request, cb 
 		case modal.ActionExport:
 			b.socket.Ack(req)
 			b.dispatch(false, func() { b.runExport(ctx, meta.ChannelID, meta.UserID, "") })
+		case modal.ActionReopen:
+			b.socket.Ack(req)
+			b.dispatch(false, func() { b.runReopen(ctx, meta.ChannelID, meta.UserID, "") })
 		}
 
 	case modal.CallbackNew:
@@ -541,6 +546,8 @@ func (b *Bot) caseErrText(err error) string {
 		return b.cfg.Msg.ErrNotCaseChannel
 	case errors.Is(err, store.ErrNotOpen):
 		return b.cfg.Msg.ErrCaseNotOpen
+	case errors.Is(err, store.ErrNotClosed):
+		return b.cfg.Msg.ErrCaseNotClosed
 	default:
 		return err.Error()
 	}
@@ -654,6 +661,16 @@ func (b *Bot) runClose(ctx context.Context, channelID, userID, responseURL strin
 	// goroutine so graceful shutdown keeps tracking it; concurrent
 	// runs per case are bounded by ErrPMRunning.
 	b.runPM(ctx, channelID, userID, responseURL)
+}
+
+func (b *Bot) runReopen(ctx context.Context, channelID, userID, responseURL string) {
+	if _, err := b.cases.Reopen(ctx, channelID, userID); err != nil {
+		b.userError(ctx, channelID, userID, responseURL,
+			b.cfg.Msg.F(b.cfg.Msg.ReopenFailed, b.caseErrText(err)))
+		return
+	}
+	// Success is announced by the note Reopen() posts; message
+	// ingestion resumes automatically now that the case is open.
 }
 
 func (b *Bot) runStatus(ctx context.Context, channelID, userID, responseURL string) {

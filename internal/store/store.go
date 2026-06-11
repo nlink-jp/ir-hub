@@ -41,6 +41,9 @@ var ErrNotFound = errors.New("not found")
 // ErrNotOpen is returned when a state transition requires an open case.
 var ErrNotOpen = errors.New("case is not open")
 
+// ErrNotClosed is returned when a reopen requires a closed case.
+var ErrNotClosed = errors.New("case is not closed")
+
 // ErrPMRunning is returned by BeginPMRun while another postmortem
 // run for the same case is still in the running state.
 var ErrPMRunning = errors.New("a postmortem run is already in progress for this case")
@@ -310,6 +313,25 @@ func (s *Store) CloseCase(id int64, closedBy string) error {
 	}
 	if n == 0 {
 		return ErrNotOpen
+	}
+	return nil
+}
+
+// ReopenCase transitions a closed case back to open, clearing the
+// closure fields so it reads as a live case again.
+func (s *Store) ReopenCase(id int64) error {
+	res, err := s.db.Exec(
+		`UPDATE cases SET state=?, closed_by=NULL, closed_at=NULL WHERE id=? AND state=?`,
+		StateOpen, id, StateClosed)
+	if err != nil {
+		return fmt.Errorf("reopen case %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotClosed
 	}
 	return nil
 }

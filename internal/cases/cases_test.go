@@ -196,6 +196,31 @@ func TestCloseOutsideCaseChannel(t *testing.T) {
 	}
 }
 
+func TestReopen(t *testing.T) {
+	fake := &slackapitest.Fake{}
+	svc, _ := newService(t, fake, defaultCfg())
+	res, _ := svc.NewCase(context.Background(), NewRequest{Title: "x", Severity: "low", OpenedBy: "U1"})
+	svc.Close(context.Background(), res.Case.ChannelID, "U2")
+
+	reopened, err := svc.Reopen(context.Background(), res.Case.ChannelID, "U3")
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	if reopened.State != store.StateOpen || reopened.ClosedBy != "" || !reopened.ClosedAt.IsZero() {
+		t.Errorf("reopened = %+v, want open with cleared closure", reopened)
+	}
+
+	// Reopening an open case: ErrNotClosed.
+	if _, err := svc.Reopen(context.Background(), res.Case.ChannelID, "U3"); !errors.Is(err, store.ErrNotClosed) {
+		t.Errorf("reopen of open err = %v, want ErrNotClosed", err)
+	}
+
+	// Outside a case channel.
+	if _, err := svc.Reopen(context.Background(), "CRANDOM", "U1"); !errors.Is(err, ErrNotCaseChannel) {
+		t.Errorf("err = %v, want ErrNotCaseChannel", err)
+	}
+}
+
 func TestStatus(t *testing.T) {
 	fake := &slackapitest.Fake{}
 	svc, st := newService(t, fake, defaultCfg())
