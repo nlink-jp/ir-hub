@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - The postmortem progress message is now edited in place as each
     of the 5 stages completes (`Analyzing… (N/5 stages complete)`),
     so responders can see the multi-minute analysis advancing
+  - Tolerate Gemini returning a bare array for the tactics and
+    activity stages (the `{"tactics": …}` / `{"participants": …}`
+    wrapper is dropped intermittently), which previously failed the
+    whole postmortem
   - Slack user IDs are resolved to `display name (ID)` everywhere
     they are stored or exported — postmortem reports, knowledge
     documents, and `/ir-hub status` — so records identify people,

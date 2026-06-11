@@ -206,6 +206,26 @@ func TestStageToleratesFencedAndDriftedJSON(t *testing.T) {
 	}
 }
 
+func TestTacticsToleratesBareArray(t *testing.T) {
+	st, c := newStoreWithCase(t, "msg")
+	rules := defaultRules()
+	// Gemini sometimes drops the {"tactics": ...} wrapper and returns
+	// a bare array.
+	rules[3] = llmtest.Rule{Marker: mTactics, Text: `[{"title":"Inspect connections",
+		"purpose":"find C2","category":"network-analysis","procedure":"ss -tnp","observations":"o",
+		"confidence":"confirmed","evidence":"e","tools":["ss"]}]`}
+	fake := &llmtest.Fake{Rules: rules}
+	r := newRunner(t, fake, st, "en")
+
+	rep, err := r.RunPostmortem(context.Background(), c, nil)
+	if err != nil {
+		t.Fatalf("RunPostmortem with bare-array tactics: %v", err)
+	}
+	if len(rep.Tactics) != 1 || rep.Tactics[0].Title != "Inspect connections" {
+		t.Errorf("tactics = %+v", rep.Tactics)
+	}
+}
+
 func TestTruncationKeepsNewest(t *testing.T) {
 	long := strings.Repeat("incident detail words here ", 40) // ~280 tokens each
 	st, c := newStoreWithCase(t, "OLDEST_MARKER "+long, long, long, "NEWEST_MARKER "+long)

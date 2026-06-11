@@ -127,6 +127,21 @@ type ActivityAnalysis struct {
 	Participants []ParticipantActivity `json:"participants"`
 }
 
+// UnmarshalJSON tolerates a bare array of participants instead of
+// the {"participants": [...]} wrapper (same Gemini drift as tactics).
+func (a *ActivityAnalysis) UnmarshalJSON(b []byte) error {
+	if trimmed := strings.TrimLeft(string(b), " \t\r\n"); strings.HasPrefix(trimmed, "[") {
+		return json.Unmarshal(b, &a.Participants)
+	}
+	type alias ActivityAnalysis
+	var x alias
+	if err := json.Unmarshal(b, &x); err != nil {
+		return err
+	}
+	a.Participants = x.Participants
+	return nil
+}
+
 // ParticipantRole is one inferred role.
 type ParticipantRole struct {
 	UserName     string `json:"user_name"`
@@ -183,6 +198,22 @@ type rawTactic struct {
 
 type tacticsResponse struct {
 	Tactics []rawTactic `json:"tactics"`
+}
+
+// UnmarshalJSON tolerates the model returning a bare array of
+// tactics instead of the {"tactics": [...]} wrapper (Gemini drops
+// the wrapper intermittently).
+func (t *tacticsResponse) UnmarshalJSON(b []byte) error {
+	if trimmed := strings.TrimLeft(string(b), " \t\r\n"); strings.HasPrefix(trimmed, "[") {
+		return json.Unmarshal(b, &t.Tactics)
+	}
+	type alias tacticsResponse
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	t.Tactics = a.Tactics
+	return nil
 }
 
 // Report is the full postmortem result. English-canonical; the
