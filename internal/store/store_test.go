@@ -475,6 +475,14 @@ func TestSearchKnowledge(t *testing.T) {
 		t.Errorf("category + terms = %+v", got)
 	}
 
+	// Tactic ID lookup.
+	all, _ = s.SearchKnowledge(nil, nil, "")
+	wantID := all[0].TacticID
+	got, _ = s.SearchKnowledge([]string{wantID}, nil, "")
+	if len(got) != 1 || got[0].TacticID != wantID {
+		t.Errorf("tactic id search %q = %+v, want exactly that doc", wantID, got)
+	}
+
 	// SQL-injection-y term is parameterized: matches nothing literally.
 	got, _ = s.SearchKnowledge([]string{"%' OR '1'='1"}, nil, "")
 	if len(got) != 0 {

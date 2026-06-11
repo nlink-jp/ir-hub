@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -415,6 +416,10 @@ func (b *Bot) handleEventsAPI(ctx context.Context, ev slackevents.EventsAPIEvent
 // acknowledgement (the LLM call takes several seconds).
 const qaWorkingReaction = "eyes"
 
+// tacticIDRe matches a knowledge tactic ID (tac-YYYYMMDD-NNN)
+// embedded anywhere in question text.
+var tacticIDRe = regexp.MustCompile(`tac-\d{8}-\d{3}`)
+
 // runQA answers a knowledge question. An empty question (bare
 // mention) prompts the user; otherwise it acknowledges with a
 // reaction, narrows knowledge by the question's words, runs the
@@ -443,7 +448,13 @@ func (b *Bot) runQA(ctx context.Context, channelID, userID, ts, question string)
 		}()
 	}
 
-	docs, err := b.store.SearchKnowledge(strings.Fields(question), nil, "")
+	// Tactic IDs embedded in the question (e.g. "tac-…の内容を見せて")
+	// are extracted as explicit search terms so an ID lookup works
+	// even when the surrounding text is non-space-delimited.
+	terms := strings.Fields(question)
+	terms = append(terms, tacticIDRe.FindAllString(question, -1)...)
+
+	docs, err := b.store.SearchKnowledge(terms, nil, "")
 	if err != nil {
 		b.logf("bot: search knowledge: %v", err)
 		b.postOrLog(ctx, channelID, m.F(m.MentionAnswerFailed, err))

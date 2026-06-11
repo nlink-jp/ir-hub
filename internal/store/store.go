@@ -681,12 +681,12 @@ func (s *Store) ListAllKnowledge() ([]KnowledgeDoc, error) {
 const knowledgeSearchLimit = 30
 
 // SearchKnowledge narrows knowledge documents by free-text terms
-// (LIKE over title/summary/tags) and tag substrings, OR-ed together
-// as candidate matches, plus an optional exact category AND-ed as a
-// hard filter. All inputs are parameterized. With no terms, no
-// tags, and no category it returns everything (the narrowing
-// degenerates to identity, per the RFP). Results are capped at
-// knowledgeSearchLimit.
+// (LIKE over title/summary/tags/tactic_id) and tag substrings,
+// OR-ed together as candidate matches, plus an optional exact
+// category AND-ed as a hard filter. All inputs are parameterized.
+// With no terms, no tags, and no category it returns everything
+// (the narrowing degenerates to identity, per the RFP). Results are
+// capped at knowledgeSearchLimit.
 func (s *Store) SearchKnowledge(terms, tags []string, category string) ([]KnowledgeDoc, error) {
 	var ors []string
 	var args []any
@@ -695,8 +695,8 @@ func (s *Store) SearchKnowledge(terms, tags []string, category string) ([]Knowle
 			continue
 		}
 		like := "%" + t + "%"
-		ors = append(ors, "(title LIKE ? OR summary LIKE ? OR tags LIKE ?)")
-		args = append(args, like, like, like)
+		ors = append(ors, "(title LIKE ? OR summary LIKE ? OR tags LIKE ? OR tactic_id LIKE ?)")
+		args = append(args, like, like, like, like)
 	}
 	for _, tag := range tags {
 		if tag = strings.TrimSpace(tag); tag == "" {

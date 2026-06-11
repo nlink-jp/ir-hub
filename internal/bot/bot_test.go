@@ -185,8 +185,18 @@ type harness struct {
 }
 
 func newHarness(t *testing.T, api *slackapitest.Fake, cfg Config) *harness {
+	return newHarnessClock(t, api, cfg, time.Time{})
+}
+
+// newHarnessClock is newHarness with a fixed store clock (for
+// deterministic tactic IDs); a zero clock means default time.Now.
+func newHarnessClock(t *testing.T, api *slackapitest.Fake, cfg Config, clock time.Time) *harness {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	var storeOpts []store.Option
+	if !clock.IsZero() {
+		storeOpts = append(storeOpts, store.WithClock(func() time.Time { return clock }))
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"), storeOpts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -640,6 +650,33 @@ func TestMentionQAFallsBackToAll(t *testing.T) {
 	}
 	if len(h.analyzer.lastDocs) != 1 {
 		t.Errorf("docs passed = %d, want 1 (fallback to all knowledge)", len(h.analyzer.lastDocs))
+	}
+}
+
+// TestMentionQAByTacticID checks that a tactic ID embedded in
+// non-space-delimited text is extracted and used to fetch exactly
+// that document.
+func TestMentionQAByTacticID(t *testing.T) {
+	fixed := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+	api := &slackapitest.Fake{}
+	h := newHarnessClock(t, api, Config{BotUserID: "UBOT"}, fixed)
+	c := h.openCaseWithMessages(t, "C1", 1)
+	// Two tactics so a narrowing must actually pick one.
+	runID, _ := h.store.BeginPMRun(c.ID)
+	h.store.FinalizePMRun(runID, c.ID, "{}", "# r", 2, func(i int, tacticID string) store.KnowledgeRow {
+		title := []string{"Inspect crontab", "Review auth log"}[i]
+		return store.KnowledgeRow{TacticID: tacticID, Title: title, Category: "linux-systemd",
+			Confidence: "confirmed", TagsJSON: `["x"]`, Summary: "s", DocJSON: "{}", DocMD: "# " + title}
+	})
+	h.analyzer.answerText = "here it is"
+
+	// Japanese, non-space-delimited, ID embedded.
+	h.bot.handleEvent(context.Background(),
+		mentionEvent("e1", "Ev1", "C1", "U-OK", "<@UBOT> tac-20260611-002の内容を見せて"))
+	h.bot.Wait()
+
+	if len(h.analyzer.lastDocs) != 1 || h.analyzer.lastDocs[0].TacticID != "tac-20260611-002" {
+		t.Errorf("docs = %+v, want exactly tac-20260611-002", h.analyzer.lastDocs)
 	}
 }
 
