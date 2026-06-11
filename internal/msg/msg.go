@@ -65,11 +65,22 @@ type Catalog struct {
 	CaseOpenFailed    string // %v error
 	ModalOpenFailed   string
 	DeniedNotice      string
-	MentionNotReady   string
 	CloseFailed       string // %v error (already localized where possible)
 	StatusFailed      string // %v error
 	ErrNotCaseChannel string
 	ErrCaseNotOpen    string
+
+	// Knowledge Q&A + briefing.
+	MentionEmptyQuestion string
+	MentionAnswerFailed  string // %v error
+	BriefingHeader       string
+
+	// Knowledge export.
+	ModalActionExport   string
+	ExportStarted       string // %s backend name
+	ExportDone          string // %d count
+	ExportFailed        string // %v error
+	ExportNotConfigured string
 
 	// Command-parse errors.
 	ErrUnknownSubcommand  string // %s subcommand
@@ -177,14 +188,22 @@ var EN = Catalog{
 	ModalOpenFailed:  ":warning: could not open the dialog, please retry",
 	DeniedNotice: "You are not authorized to use ir-hub. " +
 		"Contact the IR team if you believe this is a mistake.",
-	MentionNotReady: "Knowledge Q&A is not available yet (coming in a later phase). " +
-		"Use `/ir-hub status` for the current case state.",
 	CloseFailed:       ":warning: close failed: %v",
 	StatusFailed:      ":warning: status failed: %v",
 	ErrNotCaseChannel: "this channel is not an ir-hub case channel",
 	ErrCaseNotOpen:    "this case is not open",
 
-	ErrUnknownSubcommand:  "unknown subcommand %q (expected: new, close, status, pm)",
+	MentionEmptyQuestion: "Ask me a question, e.g. `@ir-hub how did we handle the last DB outage?`",
+	MentionAnswerFailed:  ":warning: knowledge Q&A failed: %v",
+	BriefingHeader:       ":books: *Related past knowledge*",
+
+	ModalActionExport:   "Export knowledge",
+	ExportStarted:       ":outbox_tray: Exporting knowledge to %s storage…",
+	ExportDone:          ":white_check_mark: Exported %d knowledge document(s).",
+	ExportFailed:        ":warning: export failed: %v",
+	ExportNotConfigured: "Storage export is not configured.",
+
+	ErrUnknownSubcommand:  "unknown subcommand %q (expected: new, close, status, pm, export)",
 	ErrTakesNoArgs:        "%q takes no arguments",
 	ErrSeverityNeedsValue: "--severity requires a value (%s)",
 	ErrInvalidSeverity:    "invalid severity %q (expected: %s)",
@@ -272,14 +291,22 @@ var JA = Catalog{
 	ModalOpenFailed:  ":warning: ダイアログを開けませんでした。もう一度お試しください",
 	DeniedNotice: "ir-hub を利用する権限がありません。" +
 		"心当たりがない場合は IR チームへお問い合わせください。",
-	MentionNotReady: "知見 Q&A はまだ利用できません(後続フェーズで提供予定)。" +
-		"案件の状況確認には `/ir-hub status` を利用してください。",
 	CloseFailed:       ":warning: クローズできませんでした: %v",
 	StatusFailed:      ":warning: ステータスを取得できませんでした: %v",
 	ErrNotCaseChannel: "このチャネルは ir-hub の案件チャネルではありません",
 	ErrCaseNotOpen:    "この案件は open 状態ではありません",
 
-	ErrUnknownSubcommand:  "未知のサブコマンド %q です(利用可能: new, close, status, pm)",
+	MentionEmptyQuestion: "質問を入力してください。例: `@ir-hub 前回の DB 障害はどう対応した?`",
+	MentionAnswerFailed:  ":warning: 知見 Q&A に失敗しました: %v",
+	BriefingHeader:       ":books: *関連する過去の知見*",
+
+	ModalActionExport:   "知見をエクスポート",
+	ExportStarted:       ":outbox_tray: 知見を %s ストレージにエクスポート中…",
+	ExportDone:          ":white_check_mark: %d 件の知見ドキュメントをエクスポートしました。",
+	ExportFailed:        ":warning: エクスポートに失敗しました: %v",
+	ExportNotConfigured: "ストレージ出力が設定されていません。",
+
+	ErrUnknownSubcommand:  "未知のサブコマンド %q です(利用可能: new, close, status, pm, export)",
 	ErrTakesNoArgs:        "%q は引数を取りません",
 	ErrSeverityNeedsValue: "--severity には値が必要です(%s)",
 	ErrInvalidSeverity:    "不正な重要度 %q です(利用可能: %s)",

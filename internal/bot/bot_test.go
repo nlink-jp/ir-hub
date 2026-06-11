@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -82,6 +83,16 @@ type fakeAnalyzer struct {
 	pmErr       error
 	statusText  string
 	statusErr   error
+
+	answerCalls   int
+	answerText    string
+	answerErr     error
+	lastQuestion  string
+	lastDocs      []store.KnowledgeDoc
+	briefingCalls int
+	briefingText  string
+	briefingErr   error
+	lastSummaries []analysis.KnowledgeSummary
 }
 
 func sampleReport(caseID int64) *analysis.Report {
@@ -132,6 +143,35 @@ func (f *fakeAnalyzer) StatusSummary(ctx context.Context, c *store.Case) (string
 		return f.statusText, nil
 	}
 	return "*Status*: investigating", nil
+}
+
+func (f *fakeAnalyzer) Answer(ctx context.Context, c *store.Case, question string, docs []store.KnowledgeDoc) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.answerCalls++
+	f.lastQuestion = question
+	f.lastDocs = docs
+	if f.answerErr != nil {
+		return "", f.answerErr
+	}
+	if f.answerText != "" {
+		return f.answerText, nil
+	}
+	return "based on tac-x, do this", nil
+}
+
+func (f *fakeAnalyzer) Briefing(ctx context.Context, title, severity string, summaries []analysis.KnowledgeSummary) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.briefingCalls++
+	f.lastSummaries = summaries
+	if f.briefingErr != nil {
+		return "", f.briefingErr
+	}
+	if f.briefingText != "" {
+		return f.briefingText, nil
+	}
+	return analysis.NoBriefing, nil
 }
 
 // ---- harness ----
@@ -504,38 +544,301 @@ func TestEventsAPIMessageIngestedWithDedup(t *testing.T) {
 	}
 }
 
-func TestMentionAllowedGetsReply(t *testing.T) {
+func mentionEvent(envelope, eventID, channel, user, text string) socketmode.Event {
+	return socketmode.Event{
+		Type: socketmode.EventTypeEventsAPI,
+		Data: slackevents.EventsAPIEvent{
+			Type: slackevents.CallbackEvent,
+			Data: &slackevents.EventsAPICallbackEvent{EventID: eventID},
+			InnerEvent: slackevents.EventsAPIInnerEvent{
+				Type: "app_mention",
+				Data: &slackevents.AppMentionEvent{User: user, Channel: channel, Text: text},
+			},
+		},
+		Request: &socketmode.Request{EnvelopeID: envelope},
+	}
+}
+
+func TestMentionRunsQA(t *testing.T) {
+	var mu sync.Mutex
+	var posts []string
+	api := &slackapitest.Fake{
+		PostMessageFn: func(ctx context.Context, channelID string, opts ...slack.MsgOption) (string, error) {
+			_, values, err := slack.UnsafeApplyMsgOptions("tok", channelID, "https://slack.test/api/", opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			posts = append(posts, values.Get("text"))
+			mu.Unlock()
+			return "1.1", nil
+		},
+	}
+	h := newHarness(t, api, Config{BotUserID: "UBOT"})
+	c := h.openCaseWithMessages(t, "C1", 2)
+	seedBotKnowledge(t, h.store, c.ID, "Inspect crontab")
+	h.analyzer.answerText = "Per tac-…, inspect the crontab."
+
+	h.bot.handleEvent(context.Background(),
+		mentionEvent("e1", "Ev1", "C1", "U-OK", "<@UBOT> how do we find persistence?"))
+	h.bot.Wait()
+
+	if h.analyzer.answerCalls != 1 {
+		t.Fatalf("answerCalls = %d, want 1", h.analyzer.answerCalls)
+	}
+	// Mention stripped from the question; knowledge narrowed and passed.
+	if h.analyzer.lastQuestion != "how do we find persistence?" {
+		t.Errorf("question = %q", h.analyzer.lastQuestion)
+	}
+	if len(h.analyzer.lastDocs) != 1 {
+		t.Errorf("docs passed = %d, want 1", len(h.analyzer.lastDocs))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, p := range posts {
+		if strings.Contains(p, "inspect the crontab") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("answer not posted: %v", posts)
+	}
+}
+
+func TestMentionEmptyQuestionPrompts(t *testing.T) {
 	var mu sync.Mutex
 	var ephemerals []string
 	api := &slackapitest.Fake{
 		PostEphemeralFn: func(ctx context.Context, channelID, userID string, opts ...slack.MsgOption) error {
+			_, values, _ := slack.UnsafeApplyMsgOptions("tok", channelID, "https://slack.test/api/", opts...)
 			mu.Lock()
-			defer mu.Unlock()
-			ephemerals = append(ephemerals, channelID+":"+userID)
+			ephemerals = append(ephemerals, values.Get("text"))
+			mu.Unlock()
 			return nil
 		},
 	}
+	h := newHarness(t, api, Config{BotUserID: "UBOT"})
+
+	h.bot.handleEvent(context.Background(),
+		mentionEvent("e1", "Ev1", "C1", "U-OK", "<@UBOT>"))
+	h.bot.Wait()
+
+	if h.analyzer.answerCalls != 0 {
+		t.Errorf("answerCalls = %d, want 0 for empty question", h.analyzer.answerCalls)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ephemerals) != 1 || !strings.Contains(ephemerals[0], "Ask me a question") {
+		t.Errorf("ephemerals = %v", ephemerals)
+	}
+}
+
+var errExport = errors.New("backend down")
+
+// fakeExporter records export calls.
+type fakeExporter struct {
+	mu        sync.Mutex
+	allCalls  int
+	caseCalls int
+	caseIDs   []int64
+	n         int
+	err       error
+}
+
+func (f *fakeExporter) ExportAll(ctx context.Context) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.allCalls++
+	return f.n, f.err
+}
+func (f *fakeExporter) ExportCase(ctx context.Context, caseID int64) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.caseCalls++
+	f.caseIDs = append(f.caseIDs, caseID)
+	return f.n, f.err
+}
+func (f *fakeExporter) Backend() string { return "fake" }
+
+func TestNewCaseTriggersBriefing(t *testing.T) {
+	api := &slackapitest.Fake{}
+	h := newHarness(t, api, Config{DefaultVisibility: "private"})
+	// Seed prior knowledge so the corpus is non-empty.
+	c0 := h.openCaseWithMessages(t, "C0", 1)
+	seedBotKnowledge(t, h.store, c0.ID, "Prior tactic")
+	h.analyzer.briefingText = ":books: tac-… applies here"
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "CORIGIN", "new DB outage --severity high"))
+	h.bot.Wait()
+
+	if h.analyzer.briefingCalls != 1 {
+		t.Errorf("briefingCalls = %d, want 1", h.analyzer.briefingCalls)
+	}
+}
+
+func TestNewCaseNoBriefingOnEmptyCorpus(t *testing.T) {
+	api := &slackapitest.Fake{}
 	h := newHarness(t, api, Config{})
 
-	evt := socketmode.Event{
-		Type: socketmode.EventTypeEventsAPI,
-		Data: slackevents.EventsAPIEvent{
-			Type: slackevents.CallbackEvent,
-			Data: &slackevents.EventsAPICallbackEvent{EventID: "Ev2"},
-			InnerEvent: slackevents.EventsAPIInnerEvent{
-				Type: "app_mention",
-				Data: &slackevents.AppMentionEvent{User: "U-OK", Channel: "C1"},
-			},
-		},
-		Request: &socketmode.Request{EnvelopeID: "e1"},
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "CORIGIN", "new first ever case"))
+	h.bot.Wait()
+
+	if h.analyzer.briefingCalls != 0 {
+		t.Errorf("briefingCalls = %d, want 0 (empty corpus)", h.analyzer.briefingCalls)
 	}
-	h.bot.handleEvent(context.Background(), evt)
+}
+
+func TestBriefingNoneNotPosted(t *testing.T) {
+	var mu sync.Mutex
+	var posts []string
+	api := &slackapitest.Fake{
+		PostMessageFn: func(ctx context.Context, channelID string, opts ...slack.MsgOption) (string, error) {
+			_, values, _ := slack.UnsafeApplyMsgOptions("tok", channelID, "https://slack.test/api/", opts...)
+			mu.Lock()
+			posts = append(posts, values.Get("text"))
+			mu.Unlock()
+			return "1.1", nil
+		},
+	}
+	h := newHarness(t, api, Config{})
+	c0 := h.openCaseWithMessages(t, "C0", 1)
+	seedBotKnowledge(t, h.store, c0.ID, "Prior tactic")
+	h.analyzer.briefingText = "NONE"
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "CORIGIN", "new unrelated case"))
 	h.bot.Wait()
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(ephemerals) != 1 || ephemerals[0] != "C1:U-OK" {
-		t.Errorf("ephemerals = %v", ephemerals)
+	for _, p := range posts {
+		if strings.Contains(p, "Related past knowledge") {
+			t.Errorf("NONE briefing was posted: %q", p)
+		}
+	}
+}
+
+func TestExportCommand(t *testing.T) {
+	var mu sync.Mutex
+	var responses []string
+	api := &slackapitest.Fake{
+		PostResponseFn: func(ctx context.Context, url, text string) error {
+			mu.Lock()
+			responses = append(responses, text)
+			mu.Unlock()
+			return nil
+		},
+	}
+	exp := &fakeExporter{n: 5}
+	h := newHarness(t, api, Config{})
+	h.bot.export = exp
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "CORIGIN", "export"))
+	h.bot.Wait()
+
+	if exp.allCalls != 1 {
+		t.Errorf("ExportAll calls = %d, want 1", exp.allCalls)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	gotStart, gotDone := false, false
+	for _, r := range responses {
+		if strings.Contains(r, "Exporting knowledge") {
+			gotStart = true
+		}
+		if strings.Contains(r, "Exported 5") {
+			gotDone = true
+		}
+	}
+	if !gotStart || !gotDone {
+		t.Errorf("responses = %v", responses)
+	}
+}
+
+func TestExportNotConfigured(t *testing.T) {
+	var mu sync.Mutex
+	var responses []string
+	api := &slackapitest.Fake{
+		PostResponseFn: func(ctx context.Context, url, text string) error {
+			mu.Lock()
+			responses = append(responses, text)
+			mu.Unlock()
+			return nil
+		},
+	}
+	h := newHarness(t, api, Config{}) // no export wired
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "CORIGIN", "export"))
+	h.bot.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(responses) != 1 || !strings.Contains(responses[0], "not configured") {
+		t.Errorf("responses = %v", responses)
+	}
+}
+
+func TestPMAutoExports(t *testing.T) {
+	exp := &fakeExporter{n: 2}
+	h := newHarness(t, &slackapitest.Fake{}, Config{})
+	h.bot.export = exp
+	c := h.openCaseWithMessages(t, "C1", 2)
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "C1", "pm"))
+	h.bot.Wait()
+
+	if exp.caseCalls != 1 || len(exp.caseIDs) != 1 || exp.caseIDs[0] != c.ID {
+		t.Errorf("ExportCase calls = %d, ids = %v, want 1 call for case %d", exp.caseCalls, exp.caseIDs, c.ID)
+	}
+}
+
+func TestPMAutoExportFailureDoesNotFailPM(t *testing.T) {
+	exp := &fakeExporter{err: errExport}
+	h := newHarness(t, &slackapitest.Fake{}, Config{})
+	h.bot.export = exp
+	c := h.openCaseWithMessages(t, "C1", 2)
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "C1", "pm"))
+	h.bot.Wait()
+
+	// PM still finalized despite export failure.
+	run, _ := h.store.LatestPMRun(c.ID)
+	if run.Status != "done" {
+		t.Errorf("run status = %q, want done despite export failure", run.Status)
+	}
+}
+
+func TestStripMentions(t *testing.T) {
+	tests := map[string]string{
+		"<@UBOT> hello":               "hello",
+		"  <@UBOT>   spaced  ":        "spaced",
+		"<@UBOT> <@U2> multi mention": "multi mention",
+		"<@UBOT|ir-hub> labeled":      "labeled",
+		"<@UBOT>":                     "",
+		"no mention at all":           "no mention at all",
+	}
+	for in, want := range tests {
+		if got := stripMentions(in, "UBOT"); got != want {
+			t.Errorf("stripMentions(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// seedBotKnowledge inserts a knowledge row for tests via a finalized
+// PM run.
+func seedBotKnowledge(t *testing.T, st *store.Store, caseID int64, title string) {
+	t.Helper()
+	runID, err := st.BeginPMRun(caseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinalizePMRun(runID, caseID, "{}", "# r", 1,
+		func(i int, tacticID string) store.KnowledgeRow {
+			return store.KnowledgeRow{TacticID: tacticID, Title: title, Category: "linux-systemd",
+				Confidence: "confirmed", TagsJSON: `["persistence"]`, Summary: "finds persistence",
+				DocJSON: "{}", DocMD: "# " + title}
+		}); err != nil {
+		t.Fatal(err)
 	}
 }
 

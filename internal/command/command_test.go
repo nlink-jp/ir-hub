@@ -16,6 +16,9 @@ func TestParse(t *testing.T) {
 		{name: "whitespace only", text: "   ", want: Parsed{}},
 		{name: "close", text: "close", want: Parsed{Sub: "close"}},
 		{name: "status", text: "status", want: Parsed{Sub: "status"}},
+		{name: "pm", text: "pm", want: Parsed{Sub: "pm"}},
+		{name: "export", text: "export", want: Parsed{Sub: "export"}},
+		{name: "export with args", text: "export now", wantErr: "takes no arguments"},
 		{name: "close with args", text: "close now", wantErr: "takes no arguments"},
 		{name: "unknown sub", text: "destroy", wantErr: "unknown subcommand"},
 		{

@@ -41,6 +41,17 @@ type Analyzer interface {
 	RunPostmortem(ctx context.Context, c *store.Case) (*analysis.Report, error)
 	Translate(ctx context.Context, rep *analysis.Report) *analysis.Report
 	StatusSummary(ctx context.Context, c *store.Case) (string, error)
+	Answer(ctx context.Context, c *store.Case, question string, docs []store.KnowledgeDoc) (string, error)
+	Briefing(ctx context.Context, title, severity string, summaries []analysis.KnowledgeSummary) (string, error)
+}
+
+// Exporter writes knowledge documents to storage; export.Service
+// implements it. Nil when storage is unavailable (graceful
+// degradation).
+type Exporter interface {
+	ExportAll(ctx context.Context) (int, error)
+	ExportCase(ctx context.Context, caseID int64) (int, error)
+	Backend() string
 }
 
 // Config carries bot-level settings.
@@ -54,6 +65,9 @@ type Config struct {
 	MaxConcurrent int
 	// Msg is the user-facing message catalog; nil means English.
 	Msg *msg.Catalog
+	// BotUserID is the bot's own Slack user ID, used to strip the
+	// mention token from @-mention questions.
+	BotUserID string
 }
 
 // Bot wires the event loop to the services.
@@ -65,6 +79,7 @@ type Bot struct {
 	cases    *cases.Service
 	ingest   *ingest.Ingester
 	analyzer Analyzer
+	export   Exporter // nil when storage is unavailable
 	cfg      Config
 	logf     func(format string, v ...any)
 	dedup    *dedup
@@ -82,6 +97,13 @@ type Option func(*Bot)
 // WithLogger overrides the log function.
 func WithLogger(logf func(format string, v ...any)) Option {
 	return func(b *Bot) { b.logf = logf }
+}
+
+// WithExport injects the knowledge export service. Without it,
+// export-related actions report "not configured" and auto-export is
+// skipped.
+func WithExport(e Exporter) Option {
+	return func(b *Bot) { b.export = e }
 }
 
 // WithClock injects a deterministic clock (dedup TTL, knowledge
@@ -276,6 +298,8 @@ func (b *Bot) handleSlash(ctx context.Context, cmd slack.SlashCommand) {
 		b.runStatus(ctx, cmd.ChannelID, cmd.UserID, cmd.ResponseURL)
 	case "pm":
 		b.runPM(ctx, cmd.ChannelID, cmd.UserID, cmd.ResponseURL)
+	case "export":
+		b.runExport(ctx, cmd.ChannelID, cmd.UserID, cmd.ResponseURL)
 	}
 }
 
@@ -330,6 +354,9 @@ func (b *Bot) handleInteractive(ctx context.Context, req socketmode.Request, cb 
 		case modal.ActionPM:
 			b.socket.Ack(req)
 			b.dispatch(false, func() { b.runPM(ctx, meta.ChannelID, meta.UserID, "") })
+		case modal.ActionExport:
+			b.socket.Ack(req)
+			b.dispatch(false, func() { b.runExport(ctx, meta.ChannelID, meta.UserID, "") })
 		}
 
 	case modal.CallbackNew:
@@ -379,12 +406,59 @@ func (b *Bot) handleEventsAPI(ctx context.Context, ev slackevents.EventsAPIEvent
 			}, "")
 			return
 		}
-		// Knowledge Q&A arrives with Phase 3; acknowledge politely.
-		if err := b.api.PostEphemeral(ctx, inner.Channel, inner.User,
-			slack.MsgOptionText(b.cfg.Msg.MentionNotReady, false)); err != nil {
-			b.logf("bot: mention reply: %v", err)
-		}
+		b.runQA(ctx, inner.Channel, inner.User, stripMentions(inner.Text, b.cfg.BotUserID))
 	}
+}
+
+// runQA answers a knowledge question. An empty question (bare
+// mention) prompts the user; otherwise it narrows knowledge by the
+// question's words, runs the Answer analysis, and posts to the
+// channel (collaborative — others learn the answer).
+func (b *Bot) runQA(ctx context.Context, channelID, userID, question string) {
+	m := b.cfg.Msg
+	if question == "" {
+		if err := b.api.PostEphemeral(ctx, channelID, userID,
+			slack.MsgOptionText(m.MentionEmptyQuestion, false)); err != nil {
+			b.logf("bot: empty-question reply: %v", err)
+		}
+		return
+	}
+
+	docs, err := b.store.SearchKnowledge(strings.Fields(question), nil, "")
+	if err != nil {
+		b.logf("bot: search knowledge: %v", err)
+		b.postOrLog(ctx, channelID, m.F(m.MentionAnswerFailed, err))
+		return
+	}
+
+	// Case context applies only inside a case channel.
+	var c *store.Case
+	if got, err := b.store.CaseByChannel(channelID); err == nil {
+		c = got
+	}
+
+	answer, err := b.analyzer.Answer(ctx, c, question, docs)
+	if err != nil {
+		b.logf("bot: knowledge Q&A: %v", err)
+		b.postOrLog(ctx, channelID, m.F(m.MentionAnswerFailed, err))
+		return
+	}
+	b.postOrLog(ctx, channelID, answer)
+}
+
+// stripMentions removes leading Slack mention tokens (<@U…> or
+// <@U…|label>) from text and trims the remainder.
+func stripMentions(text, botUserID string) string {
+	s := strings.TrimSpace(text)
+	for strings.HasPrefix(s, "<@") {
+		end := strings.Index(s, ">")
+		if end < 0 {
+			break
+		}
+		s = strings.TrimSpace(s[end+1:])
+	}
+	_ = botUserID // all leading mentions are stripped, not just the bot's
+	return s
 }
 
 // ---- shared actions ----
@@ -448,6 +522,84 @@ func (b *Bot) runNew(ctx context.Context, args command.NewArgs, userID, response
 		text += "\n:warning: " + w
 	}
 	b.respond(ctx, responseURL, text)
+
+	// The kickoff and slash response already happened above, so the
+	// briefing runs inline in this (already dispatched) goroutine —
+	// its latency never blocks case creation, and running inline
+	// avoids being skipped by a concurrent shutdown drain.
+	b.runBriefing(ctx, res.Case)
+}
+
+// runBriefing posts relevant past knowledge into a new case
+// channel. Best-effort: silent when there is no knowledge or none
+// is relevant; failures are logged, never surfaced (they must not
+// compete with the kickoff).
+func (b *Bot) runBriefing(ctx context.Context, c *store.Case) {
+	docs, err := b.store.ListAllKnowledge()
+	if err != nil {
+		b.logf("bot: briefing list knowledge: %v", err)
+		return
+	}
+	if len(docs) == 0 {
+		return // empty corpus (e.g. first-ever case): no noise
+	}
+
+	// Budget guard: if all summaries don't fit, narrow by the new
+	// case's title words.
+	summaries := toSummaries(docs)
+	if overBudget(summaries) {
+		if narrowed, err := b.store.SearchKnowledge(strings.Fields(c.Title), nil, ""); err == nil && len(narrowed) > 0 {
+			summaries = toSummaries(narrowed)
+		}
+	}
+
+	briefing, err := b.analyzer.Briefing(ctx, c.Title, c.Severity, summaries)
+	if err != nil {
+		b.logf("bot: briefing: %v", err)
+		return
+	}
+	if strings.TrimSpace(briefing) == "" || briefing == analysis.NoBriefing {
+		return // model found nothing relevant
+	}
+	b.postOrLog(ctx, c.ChannelID, b.cfg.Msg.BriefingHeader+"\n"+briefing)
+}
+
+func toSummaries(docs []store.KnowledgeDoc) []analysis.KnowledgeSummary {
+	out := make([]analysis.KnowledgeSummary, 0, len(docs))
+	for _, d := range docs {
+		out = append(out, analysis.KnowledgeSummary{
+			TacticID: d.TacticID, Title: d.Title, Category: d.Category, Summary: d.Summary,
+		})
+	}
+	return out
+}
+
+// overBudget approximates whether the joined summaries are too large
+// for one briefing prompt (rough heuristic; the analysis layer also
+// guards). ~50 summaries of a sentence each is the practical line.
+func overBudget(summaries []analysis.KnowledgeSummary) bool {
+	total := 0
+	for _, s := range summaries {
+		total += len(s.Title) + len(s.Summary) + len(s.Category) + len(s.TacticID)
+	}
+	return total > 60000 // chars; well under the model window but bounds fan-in
+}
+
+// runExport writes all knowledge to storage.
+func (b *Bot) runExport(ctx context.Context, channelID, userID, responseURL string) {
+	m := b.cfg.Msg
+	if b.export == nil {
+		b.userError(ctx, channelID, userID, responseURL, m.ExportNotConfigured)
+		return
+	}
+	b.respond(ctx, responseURL, m.F(m.ExportStarted, b.export.Backend()))
+	n, err := b.export.ExportAll(ctx)
+	if err != nil {
+		b.logf("bot: export: %v", err)
+		b.userError(ctx, channelID, userID, responseURL, m.F(m.ExportFailed, err))
+		return
+	}
+	b.userError(ctx, channelID, userID, responseURL, m.F(m.ExportDone, n))
 }
 
 func (b *Bot) runClose(ctx context.Context, channelID, userID, responseURL string) {
@@ -586,6 +738,17 @@ func (b *Bot) runPM(ctx context.Context, channelID, userID, responseURL string) 
 	if err != nil {
 		b.logf("bot: upload pm report: %v", err)
 		b.postOrLog(ctx, channelID, compact+"\n"+m.F(m.PMUploadFailed, err))
+	}
+
+	// Auto-export this case's knowledge to storage (outside the
+	// finalize tx, which already committed). Best-effort: export
+	// failure must never fail the postmortem.
+	if b.export != nil {
+		if n, eerr := b.export.ExportCase(ctx, c.ID); eerr != nil {
+			b.logf("bot: auto-export case #%d: %v", c.ID, eerr)
+		} else {
+			b.logf("bot: auto-exported %d knowledge document(s) for case #%d", n, c.ID)
+		}
 	}
 }
 

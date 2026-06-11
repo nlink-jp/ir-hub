@@ -16,10 +16,12 @@ import (
 	"github.com/nlink-jp/ir-hub/internal/bot"
 	"github.com/nlink-jp/ir-hub/internal/cases"
 	"github.com/nlink-jp/ir-hub/internal/config"
+	"github.com/nlink-jp/ir-hub/internal/export"
 	"github.com/nlink-jp/ir-hub/internal/ingest"
 	"github.com/nlink-jp/ir-hub/internal/llm"
 	"github.com/nlink-jp/ir-hub/internal/msg"
 	"github.com/nlink-jp/ir-hub/internal/slackapi"
+	"github.com/nlink-jp/ir-hub/internal/storage"
 	"github.com/nlink-jp/ir-hub/internal/store"
 )
 
@@ -110,12 +112,24 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		log.Printf("serve: marked %d stale postmortem run(s) as failed", n)
 	}
 
+	// Knowledge export backend. A cloud client that can't initialize
+	// (missing credentials, off-cloud) degrades gracefully: export
+	// is disabled, the bot keeps running.
+	var botOpts []bot.Option
+	if backend, err := storage.New(ctx, cfg.Storage); err != nil {
+		log.Printf("serve: storage backend %q unavailable, export disabled: %v", cfg.Storage.Backend, err)
+	} else {
+		botOpts = append(botOpts, bot.WithExport(export.New(st, backend)))
+		log.Printf("serve: knowledge export enabled (%s)", backend.Name())
+	}
+
 	b := bot.New(bot.NewSocketAdapter(socketmode.New(client)), api, st, checker, caseSvc, ing, runner,
 		bot.Config{
 			DefaultVisibility: cfg.Channel.DefaultVisibility,
 			NotifyDenied:      cfg.ACL.NotifyDenied,
 			Msg:               catalog,
-		})
+			BotUserID:         ident.UserID,
+		}, botOpts...)
 
 	log.Printf("serve: ir-hub %s starting (db: %s, model: %s)", rootCmd.Version, cfg.DB.Path, cfg.Model.Name)
 	if err := b.Run(ctx); err != nil && ctx.Err() == nil {
