@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -162,6 +163,12 @@ var migrations = []migration{
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX idx_knowledge_case ON knowledge(case_id)`,
+	}},
+	{version: 3, stmts: []string{
+		// Supports category-filtered knowledge narrowing (Phase 3
+		// Q&A / briefing); LIKE on title/summary/tags needs no index
+		// at this corpus size.
+		`CREATE INDEX idx_knowledge_category ON knowledge(category)`,
 	}},
 }
 
@@ -613,6 +620,119 @@ func (s *Store) KnowledgeByCase(caseID int64) ([]KnowledgeRow, error) {
 			return nil, fmt.Errorf("scan knowledge: %w", err)
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// KnowledgeDoc is a full knowledge row including identity and
+// timestamp — the read shape for cross-case reuse (Q&A, briefing,
+// export). KnowledgeRow remains the write shape for FinalizePMRun.
+type KnowledgeDoc struct {
+	ID         int64
+	CaseID     int64
+	TacticID   string
+	Title      string
+	Category   string
+	Confidence string
+	TagsJSON   string
+	Summary    string
+	DocJSON    string
+	DocMD      string
+	CreatedAt  time.Time
+}
+
+const knowledgeDocColumns = `id, case_id, tactic_id, title, category, confidence,
+	tags, summary, doc_json, doc_md, created_at`
+
+func scanKnowledgeDoc(rows *sql.Rows) (KnowledgeDoc, error) {
+	var d KnowledgeDoc
+	var createdAt string
+	if err := rows.Scan(&d.ID, &d.CaseID, &d.TacticID, &d.Title, &d.Category,
+		&d.Confidence, &d.TagsJSON, &d.Summary, &d.DocJSON, &d.DocMD, &createdAt); err != nil {
+		return KnowledgeDoc{}, fmt.Errorf("scan knowledge doc: %w", err)
+	}
+	if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+		d.CreatedAt = t
+	}
+	return d, nil
+}
+
+// ListAllKnowledge returns every knowledge document across all
+// cases, ordered by tactic ID.
+func (s *Store) ListAllKnowledge() ([]KnowledgeDoc, error) {
+	rows, err := s.db.Query(`SELECT ` + knowledgeDocColumns + ` FROM knowledge ORDER BY tactic_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list all knowledge: %w", err)
+	}
+	defer rows.Close()
+	var out []KnowledgeDoc
+	for rows.Next() {
+		d, err := scanKnowledgeDoc(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// knowledgeSearchLimit caps how many documents a narrowing query
+// returns, bounding the context loaded into an LLM prompt.
+const knowledgeSearchLimit = 30
+
+// SearchKnowledge narrows knowledge documents by free-text terms
+// (LIKE over title/summary/tags) and tag substrings, OR-ed together
+// as candidate matches, plus an optional exact category AND-ed as a
+// hard filter. All inputs are parameterized. With no terms, no
+// tags, and no category it returns everything (the narrowing
+// degenerates to identity, per the RFP). Results are capped at
+// knowledgeSearchLimit.
+func (s *Store) SearchKnowledge(terms, tags []string, category string) ([]KnowledgeDoc, error) {
+	var ors []string
+	var args []any
+	for _, t := range terms {
+		if t = strings.TrimSpace(t); t == "" {
+			continue
+		}
+		like := "%" + t + "%"
+		ors = append(ors, "(title LIKE ? OR summary LIKE ? OR tags LIKE ?)")
+		args = append(args, like, like, like)
+	}
+	for _, tag := range tags {
+		if tag = strings.TrimSpace(tag); tag == "" {
+			continue
+		}
+		ors = append(ors, "tags LIKE ?")
+		args = append(args, "%"+tag+"%")
+	}
+
+	var clauses []string
+	if len(ors) > 0 {
+		clauses = append(clauses, "("+strings.Join(ors, " OR ")+")")
+	}
+	if category != "" {
+		clauses = append(clauses, "category = ?")
+		args = append(args, category)
+	}
+
+	query := `SELECT ` + knowledgeDocColumns + ` FROM knowledge`
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += fmt.Sprintf(" ORDER BY tactic_id LIMIT %d", knowledgeSearchLimit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search knowledge: %w", err)
+	}
+	defer rows.Close()
+	var out []KnowledgeDoc
+	for rows.Next() {
+		d, err := scanKnowledgeDoc(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
 	}
 	return out, rows.Err()
 }

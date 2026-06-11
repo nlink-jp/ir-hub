@@ -182,21 +182,10 @@ func TestInsertDenial(t *testing.T) {
 	}
 }
 
-// TestSchemaVersionIsTwo replaces the old "= 1" expectation.
-func TestSchemaVersionIsTwo(t *testing.T) {
-	s := tempDB(t)
-	v, err := s.SchemaVersion()
-	if err != nil {
-		t.Fatalf("SchemaVersion: %v", err)
-	}
-	if v != "2" {
-		t.Errorf("SchemaVersion = %q, want 2", v)
-	}
-}
 
 // TestMigrateFromV1 builds a database the way v0.1.0 did (v1 DDL,
 // schema_version='1', existing data) and verifies Open migrates it
-// to v2 preserving data.
+// to the latest version preserving data.
 func TestMigrateFromV1(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "v1.db")
@@ -244,8 +233,8 @@ func TestMigrateFromV1(t *testing.T) {
 	}
 	defer s.Close()
 
-	if v, _ := s.SchemaVersion(); v != "2" {
-		t.Errorf("migrated version = %q, want 2", v)
+	if v, _ := s.SchemaVersion(); v != "3" {
+		t.Errorf("migrated version = %q, want 3", v)
 	}
 	// Existing data preserved.
 	c, err := s.CaseByChannel("C1")
@@ -387,6 +376,154 @@ func TestFailStaleRuns(t *testing.T) {
 	r, _ := s.LatestPMRun(c.ID)
 	if r.Status != "failed" || r.Error != "interrupted by restart" {
 		t.Errorf("run = %+v", r)
+	}
+}
+
+func TestSchemaVersionIsThree(t *testing.T) {
+	s := tempDB(t)
+	v, err := s.SchemaVersion()
+	if err != nil {
+		t.Fatalf("SchemaVersion: %v", err)
+	}
+	if v != "3" {
+		t.Errorf("SchemaVersion = %q, want 3", v)
+	}
+}
+
+// seedKnowledge inserts a knowledge row via a finalized PM run so
+// the cross-case readers have data to query.
+func seedKnowledge(t *testing.T, s *Store, caseID int64, rows ...KnowledgeRow) {
+	t.Helper()
+	runID, err := s.BeginPMRun(caseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinalizePMRun(runID, caseID, "{}", "# r", len(rows),
+		func(i int, tacticID string) KnowledgeRow {
+			r := rows[i]
+			r.TacticID = tacticID
+			return r
+		}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListAllKnowledge(t *testing.T) {
+	s := tempDB(t)
+	c1, _ := s.CreateCase("a", "high", "private", "U1")
+	c2, _ := s.CreateCase("b", "low", "public", "U1")
+	seedKnowledge(t, s, c1.ID, KnowledgeRow{Title: "disk check", Category: "log-analysis",
+		Confidence: "confirmed", TagsJSON: `["disk"]`, Summary: "s1", DocJSON: "{}", DocMD: "# disk"})
+	seedKnowledge(t, s, c2.ID, KnowledgeRow{Title: "auth review", Category: "authentication-analysis",
+		Confidence: "inferred", TagsJSON: `["auth"]`, Summary: "s2", DocJSON: "{}", DocMD: "# auth"})
+
+	docs, err := s.ListAllKnowledge()
+	if err != nil {
+		t.Fatalf("ListAllKnowledge: %v", err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("docs = %d, want 2", len(docs))
+	}
+	// Ordered by tactic_id, both have full fields.
+	if docs[0].CaseID != c1.ID || docs[0].Title != "disk check" || docs[0].CreatedAt.IsZero() {
+		t.Errorf("doc[0] = %+v", docs[0])
+	}
+	if docs[1].DocMD != "# auth" {
+		t.Errorf("doc[1].DocMD = %q", docs[1].DocMD)
+	}
+}
+
+func TestSearchKnowledge(t *testing.T) {
+	s := tempDB(t)
+	c, _ := s.CreateCase("a", "high", "private", "U1")
+	seedKnowledge(t, s, c.ID,
+		KnowledgeRow{Title: "Check systemd logs", Category: "linux-systemd",
+			Confidence: "confirmed", TagsJSON: `["persistence","linux"]`, Summary: "service restarts", DocJSON: "{}", DocMD: "#"},
+		KnowledgeRow{Title: "Review auth.log", Category: "authentication-analysis",
+			Confidence: "inferred", TagsJSON: `["auth"]`, Summary: "failed logins", DocJSON: "{}", DocMD: "#"},
+		KnowledgeRow{Title: "Inspect crontab", Category: "linux-systemd",
+			Confidence: "confirmed", TagsJSON: `["persistence"]`, Summary: "scheduled tasks", DocJSON: "{}", DocMD: "#"},
+	)
+
+	// Empty filter returns all.
+	all, _ := s.SearchKnowledge(nil, nil, "")
+	if len(all) != 3 {
+		t.Errorf("empty filter = %d, want 3", len(all))
+	}
+
+	// Term matches title.
+	got, _ := s.SearchKnowledge([]string{"systemd"}, nil, "")
+	if len(got) != 1 || got[0].Title != "Check systemd logs" {
+		t.Errorf("term 'systemd' = %+v", got)
+	}
+
+	// Term matches summary OR tags (login in summary, auth in tags).
+	got, _ = s.SearchKnowledge([]string{"logins"}, nil, "")
+	if len(got) != 1 || got[0].Title != "Review auth.log" {
+		t.Errorf("term 'logins' = %+v", got)
+	}
+
+	// Tag filter.
+	got, _ = s.SearchKnowledge(nil, []string{"persistence"}, "")
+	if len(got) != 2 {
+		t.Errorf("tag 'persistence' = %d, want 2", len(got))
+	}
+
+	// Category AND-ed with terms.
+	got, _ = s.SearchKnowledge([]string{"crontab", "auth"}, nil, "linux-systemd")
+	if len(got) != 1 || got[0].Title != "Inspect crontab" {
+		t.Errorf("category + terms = %+v", got)
+	}
+
+	// SQL-injection-y term is parameterized: matches nothing literally.
+	got, _ = s.SearchKnowledge([]string{"%' OR '1'='1"}, nil, "")
+	if len(got) != 0 {
+		t.Errorf("injection term = %d, want 0 (parameterized)", len(got))
+	}
+}
+
+func TestMigrateV2ToV3(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "v2.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Minimal v2 fixture (meta says 2, knowledge table present).
+	for _, stmt := range []string{
+		`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`INSERT INTO meta VALUES ('schema_version', '2')`,
+		`CREATE TABLE cases (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+			severity TEXT NOT NULL, visibility TEXT NOT NULL, channel_id TEXT UNIQUE,
+			channel_name TEXT, state TEXT NOT NULL DEFAULT 'creating', opened_by TEXT NOT NULL,
+			opened_at TEXT NOT NULL, closed_by TEXT, closed_at TEXT)`,
+		`CREATE TABLE knowledge (id INTEGER PRIMARY KEY AUTOINCREMENT, case_id INTEGER NOT NULL,
+			tactic_id TEXT NOT NULL UNIQUE, title TEXT NOT NULL, category TEXT NOT NULL,
+			confidence TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', summary TEXT NOT NULL,
+			doc_json TEXT NOT NULL, doc_md TEXT NOT NULL, created_at TEXT NOT NULL)`,
+		`INSERT INTO cases (title,severity,visibility,channel_id,channel_name,state,opened_by,opened_at)
+			VALUES ('legacy','high','private','C1','ir-0001','open','U1','2026-06-01T00:00:00Z')`,
+		`INSERT INTO knowledge (case_id,tactic_id,title,category,confidence,tags,summary,doc_json,doc_md,created_at)
+			VALUES (1,'tac-20260601-001','t','log-analysis','confirmed','[]','s','{}','#','2026-06-01T00:00:00Z')`,
+	} {
+		if _, err := raw.Exec(stmt); err != nil {
+			t.Fatalf("v2 fixture: %v", err)
+		}
+	}
+	raw.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open v2 db: %v", err)
+	}
+	defer s.Close()
+	if v, _ := s.SchemaVersion(); v != "3" {
+		t.Errorf("migrated version = %q, want 3", v)
+	}
+	// Existing knowledge survives and is queryable via the new reader.
+	docs, err := s.ListAllKnowledge()
+	if err != nil || len(docs) != 1 || docs[0].TacticID != "tac-20260601-001" {
+		t.Errorf("docs = %+v, err %v", docs, err)
 	}
 }
 
