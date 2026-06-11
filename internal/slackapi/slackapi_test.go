@@ -43,6 +43,52 @@ func newTestAdapter(t *testing.T, responses map[string]string) (*Adapter, *map[s
 	return NewAdapter(c), &forms, &bodies
 }
 
+// TestUploadFile drives the 3-step external upload flow against a
+// dedicated httptest server (get URL → POST content → complete).
+func TestUploadFile(t *testing.T) {
+	var uploaded []byte
+	var completed bool
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	mux.HandleFunc("/files.getUploadURLExternal", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok": true, "upload_url": "` + srv.URL + `/upload-here", "file_id": "F123"}`))
+	})
+	mux.HandleFunc("/upload-here", func(w http.ResponseWriter, r *http.Request) {
+		uploaded, _ = io.ReadAll(r.Body)
+		w.Write([]byte("OK"))
+	})
+	mux.HandleFunc("/files.completeUploadExternal", func(w http.ResponseWriter, r *http.Request) {
+		completed = true
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok": true, "files": [{"id": "F123", "title": "report"}]}`))
+	})
+
+	a := NewAdapter(slack.New("xoxb-test", slack.OptionAPIURL(srv.URL+"/")))
+	content := "# postmortem report"
+	sum, err := a.UploadFile(context.Background(), slack.UploadFileParameters{
+		Channel:  "C1",
+		Filename: "ir-0001-postmortem.md",
+		Title:    "report",
+		Content:  content,
+		FileSize: len(content),
+	})
+	if err != nil {
+		t.Fatalf("UploadFile: %v", err)
+	}
+	if sum.ID != "F123" {
+		t.Errorf("file id = %q", sum.ID)
+	}
+	if !strings.Contains(string(uploaded), "postmortem report") {
+		t.Errorf("uploaded body = %.100q", uploaded)
+	}
+	if !completed {
+		t.Error("completeUploadExternal not called")
+	}
+}
+
 func TestCreateConversation(t *testing.T) {
 	a, got, _ := newTestAdapter(t, map[string]string{
 		"/conversations.create": `{"ok": true, "channel": {"id": "C123", "name": "ir-0001-x"}}`,

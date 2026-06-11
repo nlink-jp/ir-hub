@@ -26,6 +26,7 @@ type Fake struct {
 	GetConversationHistoryFn func(ctx context.Context, params *slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error)
 	AuthTestFn               func(ctx context.Context) (*slack.AuthTestResponse, error)
 	PostResponseFn           func(ctx context.Context, responseURL, text string) error
+	UploadFileFn             func(ctx context.Context, params slack.UploadFileParameters) (*slack.FileSummary, error)
 }
 
 func (f *Fake) record(name string) {
@@ -124,4 +125,12 @@ func (f *Fake) PostResponse(ctx context.Context, responseURL, text string) error
 		return f.PostResponseFn(ctx, responseURL, text)
 	}
 	return nil
+}
+
+func (f *Fake) UploadFile(ctx context.Context, params slack.UploadFileParameters) (*slack.FileSummary, error) {
+	f.record("UploadFile")
+	if f.UploadFileFn != nil {
+		return f.UploadFileFn(ctx, params)
+	}
+	return &slack.FileSummary{ID: "FFAKE", Title: params.Title}, nil
 }

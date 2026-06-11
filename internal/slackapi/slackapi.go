@@ -37,6 +37,9 @@ type API interface {
 	// response_url — works even when the bot is not a member of the
 	// originating channel.
 	PostResponse(ctx context.Context, responseURL, text string) error
+	// UploadFile uploads a file (e.g. the postmortem Markdown
+	// snippet) to a channel via the external-upload flow.
+	UploadFile(ctx context.Context, params slack.UploadFileParameters) (*slack.FileSummary, error)
 }
 
 // Adapter implements API on a real *slack.Client.
@@ -97,4 +100,8 @@ func (a *Adapter) PostResponse(ctx context.Context, responseURL, text string) er
 		Text:         text,
 		ResponseType: "ephemeral",
 	})
+}
+
+func (a *Adapter) UploadFile(ctx context.Context, params slack.UploadFileParameters) (*slack.FileSummary, error) {
+	return a.c.UploadFileContext(ctx, params)
 }
