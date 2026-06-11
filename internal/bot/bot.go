@@ -430,6 +430,17 @@ func (b *Bot) runQA(ctx context.Context, channelID, userID, question string) {
 		b.postOrLog(ctx, channelID, m.F(m.MentionAnswerFailed, err))
 		return
 	}
+	// Keyword narrowing can miss when the question and the
+	// (English-canonical) knowledge are in different languages, or
+	// for non-space-delimited scripts. Fall back to loading all
+	// knowledge — Answer budget-limits the docs it actually uses.
+	if len(docs) == 0 {
+		if docs, err = b.store.ListAllKnowledge(); err != nil {
+			b.logf("bot: list knowledge: %v", err)
+			b.postOrLog(ctx, channelID, m.F(m.MentionAnswerFailed, err))
+			return
+		}
+	}
 
 	// Case context applies only inside a case channel.
 	var c *store.Case

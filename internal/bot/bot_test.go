@@ -606,6 +606,29 @@ func TestMentionRunsQA(t *testing.T) {
 	}
 }
 
+// TestMentionQAFallsBackToAll covers the cross-language case: a
+// Japanese question can't LIKE-match English-canonical knowledge,
+// so the bot must fall back to loading all knowledge.
+func TestMentionQAFallsBackToAll(t *testing.T) {
+	api := &slackapitest.Fake{}
+	h := newHarness(t, api, Config{BotUserID: "UBOT"})
+	c := h.openCaseWithMessages(t, "C1", 1)
+	seedBotKnowledge(t, h.store, c.ID, "Inspect crontab for persistence")
+	h.analyzer.answerText = "answer"
+
+	// Japanese question: SearchKnowledge(Fields(...)) won't match.
+	h.bot.handleEvent(context.Background(),
+		mentionEvent("e1", "Ev1", "C1", "U-OK", "<@UBOT> 前回のサーバー侵害ではどう対応した?"))
+	h.bot.Wait()
+
+	if h.analyzer.answerCalls != 1 {
+		t.Fatalf("answerCalls = %d, want 1", h.analyzer.answerCalls)
+	}
+	if len(h.analyzer.lastDocs) != 1 {
+		t.Errorf("docs passed = %d, want 1 (fallback to all knowledge)", len(h.analyzer.lastDocs))
+	}
+}
+
 func TestMentionEmptyQuestionPrompts(t *testing.T) {
 	var mu sync.Mutex
 	var ephemerals []string
