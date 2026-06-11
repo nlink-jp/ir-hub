@@ -552,7 +552,7 @@ func mentionEvent(envelope, eventID, channel, user, text string) socketmode.Even
 			Data: &slackevents.EventsAPICallbackEvent{EventID: eventID},
 			InnerEvent: slackevents.EventsAPIInnerEvent{
 				Type: "app_mention",
-				Data: &slackevents.AppMentionEvent{User: user, Channel: channel, Text: text},
+				Data: &slackevents.AppMentionEvent{User: user, Channel: channel, Text: text, TimeStamp: "1718000000.000100"},
 			},
 		},
 		Request: &socketmode.Request{EnvelopeID: envelope},
@@ -603,6 +603,20 @@ func TestMentionRunsQA(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("answer not posted: %v", posts)
+	}
+	// Working reaction added then removed (immediate acknowledgement).
+	calls := api.CallNames()
+	var added, removed bool
+	for _, c := range calls {
+		if c == "AddReaction:eyes" {
+			added = true
+		}
+		if c == "RemoveReaction:eyes" {
+			removed = true
+		}
+	}
+	if !added || !removed {
+		t.Errorf("reaction lifecycle = add %v / remove %v, want both", added, removed)
 	}
 }
 

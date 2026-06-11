@@ -96,6 +96,7 @@ oauth_config:
       - groups:read
       - groups:history
       - files:write
+      - reactions:write
 settings:
   event_subscriptions:
     bot_events:
@@ -183,7 +184,8 @@ About ページに表示されるのは 1 言語のみなので、ワークス�
 | `groups:write` | `/ir-hub new --private` | **private** 案件チャネルの作成と起票者の招待 |
 | `groups:read` | 案件参照 | private チャネルのメタデータ取得 |
 | `groups:history` | 取り込み | 再接続 backfill のための private 案件チャネル履歴読取り |
-| `files:write` | 長文レポート | 長文ポストモーテムのスニペット投稿(Phase 2。再インストールを避けるため初回から要求) |
+| `files:write` | 長文レポート | 長文ポストモーテムのスニペット投稿 |
+| `reactions:write` | `@ir-hub` Q&A | 回答生成中であることを示す 👀 リアクションの付与・除去 |
 
 ir-hub が意図的に**要求しない**もの:
 

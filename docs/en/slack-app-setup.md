@@ -101,6 +101,7 @@ oauth_config:
       - groups:read
       - groups:history
       - files:write
+      - reactions:write
 settings:
   event_subscriptions:
     bot_events:
@@ -188,7 +189,8 @@ team asks "why does this app need X", this is the answer key.
 | `groups:write` | `/ir-hub new --private` | Create **private** case channels and invite the opener |
 | `groups:read` | case lookups | Read private-channel metadata |
 | `groups:history` | ingestion | Read private case-channel history for reconnect backfill |
-| `files:write` | long reports | Post long postmortem reports as snippets (Phase 2; requested now to avoid a reinstall) |
+| `files:write` | long reports | Post long postmortem reports as snippets |
+| `reactions:write` | `@ir-hub` Q&A | Add/remove a 👀 reaction to acknowledge a question while the answer is generated |
 
 What ir-hub deliberately does **not** request:
 

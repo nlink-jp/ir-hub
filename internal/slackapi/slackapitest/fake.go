@@ -27,6 +27,8 @@ type Fake struct {
 	AuthTestFn               func(ctx context.Context) (*slack.AuthTestResponse, error)
 	PostResponseFn           func(ctx context.Context, responseURL, text string) error
 	UploadFileFn             func(ctx context.Context, params slack.UploadFileParameters) (*slack.FileSummary, error)
+	AddReactionFn            func(ctx context.Context, name, channelID, timestamp string) error
+	RemoveReactionFn         func(ctx context.Context, name, channelID, timestamp string) error
 }
 
 func (f *Fake) record(name string) {
@@ -133,4 +135,20 @@ func (f *Fake) UploadFile(ctx context.Context, params slack.UploadFileParameters
 		return f.UploadFileFn(ctx, params)
 	}
 	return &slack.FileSummary{ID: "FFAKE", Title: params.Title}, nil
+}
+
+func (f *Fake) AddReaction(ctx context.Context, name, channelID, timestamp string) error {
+	f.record("AddReaction:" + name)
+	if f.AddReactionFn != nil {
+		return f.AddReactionFn(ctx, name, channelID, timestamp)
+	}
+	return nil
+}
+
+func (f *Fake) RemoveReaction(ctx context.Context, name, channelID, timestamp string) error {
+	f.record("RemoveReaction:" + name)
+	if f.RemoveReactionFn != nil {
+		return f.RemoveReactionFn(ctx, name, channelID, timestamp)
+	}
+	return nil
 }

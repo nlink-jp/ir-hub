@@ -128,6 +128,7 @@ oauth_config:
       - groups:read
       - groups:history
       - files:write
+      - reactions:write
 settings:
   event_subscriptions:
     bot_events:

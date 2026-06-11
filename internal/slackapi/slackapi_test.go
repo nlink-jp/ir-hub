@@ -89,6 +89,23 @@ func TestUploadFile(t *testing.T) {
 	}
 }
 
+func TestReactions(t *testing.T) {
+	a, got, _ := newTestAdapter(t, nil)
+	if err := a.AddReaction(context.Background(), "eyes", "C1", "1718000000.000100"); err != nil {
+		t.Fatalf("AddReaction: %v", err)
+	}
+	if f := (*got)["/reactions.add"]; f.Get("name") != "eyes" || f.Get("channel") != "C1" ||
+		f.Get("timestamp") != "1718000000.000100" {
+		t.Errorf("reactions.add form = %v", f)
+	}
+	if err := a.RemoveReaction(context.Background(), "eyes", "C1", "1718000000.000100"); err != nil {
+		t.Fatalf("RemoveReaction: %v", err)
+	}
+	if f := (*got)["/reactions.remove"]; f.Get("name") != "eyes" {
+		t.Errorf("reactions.remove form = %v", f)
+	}
+}
+
 func TestCreateConversation(t *testing.T) {
 	a, got, _ := newTestAdapter(t, map[string]string{
 		"/conversations.create": `{"ok": true, "channel": {"id": "C123", "name": "ir-0001-x"}}`,

@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     default AWS credential chain (`aws-sdk-go-v2`, the org's first
     AWS SDK). A cloud client that can't initialize degrades
     gracefully — export is disabled, the bot keeps running
+  - Q&A acknowledges a question immediately with a 👀 reaction
+    (removed once the answer posts), since the LLM call takes
+    several seconds — requires the new `reactions:write` scope
+  - Q&A falls back to loading all knowledge when keyword narrowing
+    matches nothing (e.g. a Japanese question against
+    English-canonical knowledge)
   - Security: Q&A questions, knowledge docs, and briefing summaries
     are all nonce-wrapped (user + LLM-derived content); the defense
     preamble stays first and output is defanged

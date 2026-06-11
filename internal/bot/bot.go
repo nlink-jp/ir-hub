@@ -406,15 +406,21 @@ func (b *Bot) handleEventsAPI(ctx context.Context, ev slackevents.EventsAPIEvent
 			}, "")
 			return
 		}
-		b.runQA(ctx, inner.Channel, inner.User, stripMentions(inner.Text, b.cfg.BotUserID))
+		b.runQA(ctx, inner.Channel, inner.User, inner.TimeStamp, stripMentions(inner.Text, b.cfg.BotUserID))
 	}
 }
 
+// qaWorkingReaction is added to a question while ir-hub thinks, and
+// removed once the answer is posted — an immediate, low-noise
+// acknowledgement (the LLM call takes several seconds).
+const qaWorkingReaction = "eyes"
+
 // runQA answers a knowledge question. An empty question (bare
-// mention) prompts the user; otherwise it narrows knowledge by the
-// question's words, runs the Answer analysis, and posts to the
-// channel (collaborative — others learn the answer).
-func (b *Bot) runQA(ctx context.Context, channelID, userID, question string) {
+// mention) prompts the user; otherwise it acknowledges with a
+// reaction, narrows knowledge by the question's words, runs the
+// Answer analysis, and posts to the channel (collaborative — others
+// learn the answer).
+func (b *Bot) runQA(ctx context.Context, channelID, userID, ts, question string) {
 	m := b.cfg.Msg
 	if question == "" {
 		if err := b.api.PostEphemeral(ctx, channelID, userID,
@@ -422,6 +428,19 @@ func (b *Bot) runQA(ctx context.Context, channelID, userID, question string) {
 			b.logf("bot: empty-question reply: %v", err)
 		}
 		return
+	}
+
+	// Immediate acknowledgement; removed once we answer. Best-effort
+	// (requires reactions:write) — failures don't block the answer.
+	if ts != "" {
+		if err := b.api.AddReaction(ctx, qaWorkingReaction, channelID, ts); err != nil {
+			b.logf("bot: add working reaction: %v", err)
+		}
+		defer func() {
+			if err := b.api.RemoveReaction(ctx, qaWorkingReaction, channelID, ts); err != nil {
+				b.logf("bot: remove working reaction: %v", err)
+			}
+		}()
 	}
 
 	docs, err := b.store.SearchKnowledge(strings.Fields(question), nil, "")

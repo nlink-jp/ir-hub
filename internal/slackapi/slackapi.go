@@ -40,6 +40,10 @@ type API interface {
 	// UploadFile uploads a file (e.g. the postmortem Markdown
 	// snippet) to a channel via the external-upload flow.
 	UploadFile(ctx context.Context, params slack.UploadFileParameters) (*slack.FileSummary, error)
+	// AddReaction adds an emoji reaction to a message (channel, ts).
+	AddReaction(ctx context.Context, name, channelID, timestamp string) error
+	// RemoveReaction removes an emoji reaction from a message.
+	RemoveReaction(ctx context.Context, name, channelID, timestamp string) error
 }
 
 // Adapter implements API on a real *slack.Client.
@@ -104,4 +108,12 @@ func (a *Adapter) PostResponse(ctx context.Context, responseURL, text string) er
 
 func (a *Adapter) UploadFile(ctx context.Context, params slack.UploadFileParameters) (*slack.FileSummary, error) {
 	return a.c.UploadFileContext(ctx, params)
+}
+
+func (a *Adapter) AddReaction(ctx context.Context, name, channelID, timestamp string) error {
+	return a.c.AddReactionContext(ctx, name, slack.NewRefToMessage(channelID, timestamp))
+}
+
+func (a *Adapter) RemoveReaction(ctx context.Context, name, channelID, timestamp string) error {
+	return a.c.RemoveReactionContext(ctx, name, slack.NewRefToMessage(channelID, timestamp))
 }
