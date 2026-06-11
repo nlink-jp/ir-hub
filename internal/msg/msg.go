@@ -80,6 +80,21 @@ type Catalog struct {
 	ErrVisibilityConflict string
 	ErrUnknownFlag        string // %s flag
 
+	// Postmortem flow (bot posts).
+	ModalActionPM     string
+	PMStarted         string
+	PMNoMessages      string
+	PMAlreadyRunning  string
+	PMFailed          string // %v error
+	PMCompactHeader   string // %04d case id, %s title
+	PMCompactSeverity string // %s severity
+	PMCompactScore    string // %d score
+	PMCompactTactics  string // %d count
+	PMCompactSee      string
+	PMUploadFailed    string // %v error
+	StatusGenerating  string
+	StatusLLMFailed   string // %v error
+
 	// Postmortem report rendering (Markdown).
 	RptTitle         string // %04d case id, %s title
 	RptSummary       string
@@ -140,7 +155,7 @@ var EN = Catalog{
 	KickoffSeverity: "• Severity: `%s`",
 	KickoffOpenedBy: "• Opened by: <@%s>",
 	KickoffCloseHint: "• Close with `/ir-hub close` when the response is done — " +
-		"the postmortem will run from there (Phase 2).",
+		"the postmortem runs automatically from there.",
 	KickoffPrivateNote: "• This channel is *private*: it cannot be converted to public " +
 		"later, and ir-hub must remain a member to keep ingesting messages.",
 	CaseClosed:        ":white_check_mark: *Case #%04d closed* by <@%s>.",
@@ -169,13 +184,27 @@ var EN = Catalog{
 	ErrNotCaseChannel: "this channel is not an ir-hub case channel",
 	ErrCaseNotOpen:    "this case is not open",
 
-	ErrUnknownSubcommand:  "unknown subcommand %q (expected: new, close, status)",
+	ErrUnknownSubcommand:  "unknown subcommand %q (expected: new, close, status, pm)",
 	ErrTakesNoArgs:        "%q takes no arguments",
 	ErrSeverityNeedsValue: "--severity requires a value (%s)",
 	ErrInvalidSeverity:    "invalid severity %q (expected: %s)",
 	ErrTitleRequired:      "new requires a title: /ir-hub new <title> [--severity <lv>] [--private|--public]",
 	ErrVisibilityConflict: "--private and --public are mutually exclusive",
 	ErrUnknownFlag:        "unknown flag %q",
+
+	ModalActionPM:     "Run postmortem",
+	PMStarted:         ":hourglass_flowing_sand: Postmortem analysis started — this usually takes a few minutes.",
+	PMNoMessages:      "this case has no ingested messages to analyze",
+	PMAlreadyRunning:  "a postmortem run is already in progress for this case",
+	PMFailed:          ":warning: postmortem failed: %v — retry with `/ir-hub pm`",
+	PMCompactHeader:   ":memo: *Postmortem: Case #%04d — %s*",
+	PMCompactSeverity: "• Assessed severity: `%s`",
+	PMCompactScore:    "• Process score: %d/10",
+	PMCompactTactics:  "• Extracted tactics: %d",
+	PMCompactSee:      "The full report is attached as a snippet.",
+	PMUploadFailed:    ":warning: could not attach the full report: %v — the report is stored; `/ir-hub pm` regenerates it",
+	StatusGenerating:  "_(generating the situation summary…)_",
+	StatusLLMFailed:   ":warning: situation summary failed: %v",
 
 	RptTitle:         "# Postmortem: Case #%04d — %s",
 	RptSummary:       "## Summary",
@@ -221,7 +250,7 @@ var JA = Catalog{
 	KickoffSeverity: "• 重要度: `%s`",
 	KickoffOpenedBy: "• 起票者: <@%s>",
 	KickoffCloseHint: "• 対応が完了したら `/ir-hub close` でクローズしてください — " +
-		"ポストモーテムはそこから実行されます(Phase 2)。",
+		"ポストモーテムが自動で実行されます。",
 	KickoffPrivateNote: "• このチャネルは*プライベート*です: 後から public へは変更できません。" +
 		"メッセージ取り込み継続のため ir-hub をメンバーから外さないでください。",
 	CaseClosed:        ":white_check_mark: *案件 #%04d をクローズしました*(<@%s>)",
@@ -250,13 +279,27 @@ var JA = Catalog{
 	ErrNotCaseChannel: "このチャネルは ir-hub の案件チャネルではありません",
 	ErrCaseNotOpen:    "この案件は open 状態ではありません",
 
-	ErrUnknownSubcommand:  "未知のサブコマンド %q です(利用可能: new, close, status)",
+	ErrUnknownSubcommand:  "未知のサブコマンド %q です(利用可能: new, close, status, pm)",
 	ErrTakesNoArgs:        "%q は引数を取りません",
 	ErrSeverityNeedsValue: "--severity には値が必要です(%s)",
 	ErrInvalidSeverity:    "不正な重要度 %q です(利用可能: %s)",
 	ErrTitleRequired:      "new にはタイトルが必要です: /ir-hub new <タイトル> [--severity <lv>] [--private|--public]",
 	ErrVisibilityConflict: "--private と --public は同時に指定できません",
 	ErrUnknownFlag:        "未知のフラグ %q です",
+
+	ModalActionPM:     "ポストモーテムを実行",
+	PMStarted:         ":hourglass_flowing_sand: ポストモーテム分析を開始しました — 通常数分かかります。",
+	PMNoMessages:      "この案件には分析対象のメッセージがありません",
+	PMAlreadyRunning:  "この案件のポストモーテムは既に実行中です",
+	PMFailed:          ":warning: ポストモーテムに失敗しました: %v — `/ir-hub pm` で再実行できます",
+	PMCompactHeader:   ":memo: *ポストモーテム: 案件 #%04d — %s*",
+	PMCompactSeverity: "• 評価された重要度: `%s`",
+	PMCompactScore:    "• プロセススコア: %d/10",
+	PMCompactTactics:  "• 抽出タクティック: %d 件",
+	PMCompactSee:      "全文レポートはスニペットとして添付しています。",
+	PMUploadFailed:    ":warning: 全文レポートを添付できませんでした: %v — レポートは保存済みで、`/ir-hub pm` で再生成できます",
+	StatusGenerating:  "_(状況サマリを生成中…)_",
+	StatusLLMFailed:   ":warning: 状況サマリの生成に失敗しました: %v",
 
 	RptTitle:         "# ポストモーテム: 案件 #%04d — %s",
 	RptSummary:       "## サマリ",

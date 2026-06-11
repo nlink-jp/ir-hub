@@ -49,8 +49,8 @@ func TestBuildActionPicker(t *testing.T) {
 	if got := decoded.Blocks[0].Element.Type; got != "static_select" {
 		t.Errorf("element type = %q", got)
 	}
-	if n := len(decoded.Blocks[0].Element.Options); n != 3 {
-		t.Errorf("options = %d, want 3", n)
+	if n := len(decoded.Blocks[0].Element.Options); n != 4 {
+		t.Errorf("options = %d, want 4 (new/close/status/pm)", n)
 	}
 
 	var gotMeta Metadata

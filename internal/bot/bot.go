@@ -7,7 +7,9 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -18,18 +20,28 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/nlink-jp/ir-hub/internal/acl"
+	"github.com/nlink-jp/ir-hub/internal/analysis"
 	"github.com/nlink-jp/ir-hub/internal/cases"
 	"github.com/nlink-jp/ir-hub/internal/command"
 	"github.com/nlink-jp/ir-hub/internal/ingest"
+	"github.com/nlink-jp/ir-hub/internal/knowledge"
 	"github.com/nlink-jp/ir-hub/internal/modal"
 	"github.com/nlink-jp/ir-hub/internal/msg"
 	"github.com/nlink-jp/ir-hub/internal/slackapi"
 	"github.com/nlink-jp/ir-hub/internal/store"
 )
 
-// defaultMaxConcurrent bounds background work (LLM-free in Phase 1,
-// but ingest/backfill and Slack calls still deserve a ceiling).
+// defaultMaxConcurrent bounds background work (LLM analyses,
+// ingest/backfill, Slack calls).
 const defaultMaxConcurrent = 16
+
+// Analyzer is the LLM analysis surface the bot consumes;
+// analysis.Runner implements it, tests fake it.
+type Analyzer interface {
+	RunPostmortem(ctx context.Context, c *store.Case) (*analysis.Report, error)
+	Translate(ctx context.Context, rep *analysis.Report) *analysis.Report
+	StatusSummary(ctx context.Context, c *store.Case) (string, error)
+}
 
 // Config carries bot-level settings.
 type Config struct {
@@ -46,15 +58,17 @@ type Config struct {
 
 // Bot wires the event loop to the services.
 type Bot struct {
-	socket Socket
-	api    slackapi.API
-	store  *store.Store
-	acl    *acl.Checker
-	cases  *cases.Service
-	ingest *ingest.Ingester
-	cfg    Config
-	logf   func(format string, v ...any)
-	dedup  *dedup
+	socket   Socket
+	api      slackapi.API
+	store    *store.Store
+	acl      *acl.Checker
+	cases    *cases.Service
+	ingest   *ingest.Ingester
+	analyzer Analyzer
+	cfg      Config
+	logf     func(format string, v ...any)
+	dedup    *dedup
+	now      func() time.Time
 
 	mu       sync.Mutex
 	draining bool
@@ -70,14 +84,18 @@ func WithLogger(logf func(format string, v ...any)) Option {
 	return func(b *Bot) { b.logf = logf }
 }
 
-// WithClock injects a deterministic clock (dedup TTL) for tests.
+// WithClock injects a deterministic clock (dedup TTL, knowledge
+// timestamps) for tests.
 func WithClock(now func() time.Time) Option {
-	return func(b *Bot) { b.dedup.now = now }
+	return func(b *Bot) {
+		b.dedup.now = now
+		b.now = now
+	}
 }
 
 // New creates a Bot.
 func New(socket Socket, api slackapi.API, st *store.Store, checker *acl.Checker,
-	caseSvc *cases.Service, ing *ingest.Ingester, cfg Config, opts ...Option) *Bot {
+	caseSvc *cases.Service, ing *ingest.Ingester, analyzer Analyzer, cfg Config, opts ...Option) *Bot {
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = defaultMaxConcurrent
 	}
@@ -85,16 +103,18 @@ func New(socket Socket, api slackapi.API, st *store.Store, checker *acl.Checker,
 		cfg.Msg = &msg.EN
 	}
 	b := &Bot{
-		socket: socket,
-		api:    api,
-		store:  st,
-		acl:    checker,
-		cases:  caseSvc,
-		ingest: ing,
-		cfg:    cfg,
-		logf:   log.Printf,
-		dedup:  newDedup(time.Now),
-		sem:    make(chan struct{}, cfg.MaxConcurrent),
+		socket:   socket,
+		api:      api,
+		store:    st,
+		acl:      checker,
+		cases:    caseSvc,
+		ingest:   ing,
+		analyzer: analyzer,
+		cfg:      cfg,
+		logf:     log.Printf,
+		dedup:    newDedup(time.Now),
+		now:      time.Now,
+		sem:      make(chan struct{}, cfg.MaxConcurrent),
 	}
 	for _, opt := range opts {
 		opt(b)
@@ -254,6 +274,8 @@ func (b *Bot) handleSlash(ctx context.Context, cmd slack.SlashCommand) {
 		b.runClose(ctx, cmd.ChannelID, cmd.UserID, cmd.ResponseURL)
 	case "status":
 		b.runStatus(ctx, cmd.ChannelID, cmd.UserID, cmd.ResponseURL)
+	case "pm":
+		b.runPM(ctx, cmd.ChannelID, cmd.UserID, cmd.ResponseURL)
 	}
 }
 
@@ -305,6 +327,9 @@ func (b *Bot) handleInteractive(ctx context.Context, req socketmode.Request, cb 
 		case modal.ActionStatus:
 			b.socket.Ack(req)
 			b.dispatch(false, func() { b.runStatus(ctx, meta.ChannelID, meta.UserID, "") })
+		case modal.ActionPM:
+			b.socket.Ack(req)
+			b.dispatch(false, func() { b.runPM(ctx, meta.ChannelID, meta.UserID, "") })
 		}
 
 	case modal.CallbackNew:
@@ -432,6 +457,10 @@ func (b *Bot) runClose(ctx context.Context, channelID, userID, responseURL strin
 		return
 	}
 	// Success is announced by the closing message Close() posts.
+	// The postmortem follows inline in this (already dispatched)
+	// goroutine so graceful shutdown keeps tracking it; concurrent
+	// runs per case are bounded by ErrPMRunning.
+	b.runPM(ctx, channelID, userID, responseURL)
 }
 
 func (b *Bot) runStatus(ctx context.Context, channelID, userID, responseURL string) {
@@ -441,7 +470,161 @@ func (b *Bot) runStatus(ctx context.Context, channelID, userID, responseURL stri
 			b.cfg.Msg.F(b.cfg.Msg.StatusFailed, b.caseErrText(err)))
 		return
 	}
-	b.userError(ctx, channelID, userID, responseURL, text)
+	// Metadata block replies immediately; the LLM situation summary
+	// follows as a channel post.
+	b.userError(ctx, channelID, userID, responseURL, text+"\n"+b.cfg.Msg.StatusGenerating)
+
+	c, err := b.store.CaseByChannel(channelID)
+	if err != nil {
+		b.logf("bot: status summary lookup: %v", err)
+		return
+	}
+	summary, err := b.analyzer.StatusSummary(ctx, c)
+	if err != nil {
+		b.logf("bot: status summary: %v", err)
+		b.userError(ctx, channelID, userID, responseURL,
+			b.cfg.Msg.F(b.cfg.Msg.StatusLLMFailed, err))
+		return
+	}
+	if _, err := b.api.PostMessage(ctx, channelID, slack.MsgOptionText(summary, false)); err != nil {
+		b.logf("bot: post status summary: %v", err)
+	}
+}
+
+// runPM executes the postmortem for the case bound to channelID:
+// guard (case exists, has messages, no run in flight) → progress
+// post → five-stage analysis → finalize (store report + replace
+// knowledge with fresh tactic IDs) → translated compact summary
+// with the full Markdown report attached as a snippet.
+func (b *Bot) runPM(ctx context.Context, channelID, userID, responseURL string) {
+	m := b.cfg.Msg
+	c, err := b.store.CaseByChannel(channelID)
+	if errors.Is(err, store.ErrNotFound) {
+		b.userError(ctx, channelID, userID, responseURL, m.F(m.PMFailed, m.ErrNotCaseChannel))
+		return
+	}
+	if err != nil {
+		b.logf("bot: pm lookup: %v", err)
+		return
+	}
+	if n, err := b.store.CountMessages(c.ID); err != nil || n == 0 {
+		b.userError(ctx, channelID, userID, responseURL, m.F(m.PMFailed, m.PMNoMessages))
+		return
+	}
+
+	runID, err := b.store.BeginPMRun(c.ID)
+	if errors.Is(err, store.ErrPMRunning) {
+		b.userError(ctx, channelID, userID, responseURL, m.F(m.PMFailed, m.PMAlreadyRunning))
+		return
+	}
+	if err != nil {
+		b.logf("bot: begin pm run: %v", err)
+		return
+	}
+
+	if _, err := b.api.PostMessage(ctx, channelID, slack.MsgOptionText(m.PMStarted, false)); err != nil {
+		b.logf("bot: pm progress post: %v", err)
+	}
+
+	rep, err := b.analyzer.RunPostmortem(ctx, c)
+	if err != nil {
+		b.logf("bot: postmortem case #%d: %v", c.ID, err)
+		if ferr := b.store.FailPMRun(runID, err.Error()); ferr != nil {
+			b.logf("bot: fail pm run: %v", ferr)
+		}
+		b.postOrLog(ctx, channelID, m.F(m.PMFailed, err))
+		return
+	}
+
+	// Canonical English artifacts for storage.
+	reportJSON, err := json.Marshal(rep)
+	if err != nil {
+		b.logf("bot: marshal report: %v", err)
+		reportJSON = []byte("{}")
+	}
+	englishMD := analysis.RenderMarkdown(rep, &msg.EN)
+
+	createdAt := b.now().UTC()
+	err = b.store.FinalizePMRun(runID, c.ID, string(reportJSON), englishMD,
+		len(rep.Tactics), func(i int, tacticID string) store.KnowledgeRow {
+			doc, derr := knowledge.Build(rep.Tactics[i], tacticID, rep.Channel, rep.Participants, createdAt)
+			if derr != nil {
+				b.logf("bot: build knowledge doc %s: %v", tacticID, derr)
+			}
+			tags, _ := json.Marshal(rep.Tactics[i].Tags)
+			return store.KnowledgeRow{
+				TacticID:   tacticID,
+				Title:      rep.Tactics[i].Title,
+				Category:   rep.Tactics[i].Category,
+				Confidence: rep.Tactics[i].Confidence,
+				TagsJSON:   string(tags),
+				Summary:    doc.Summary,
+				DocJSON:    doc.JSON,
+				DocMD:      doc.Markdown,
+			}
+		})
+	if err != nil {
+		b.logf("bot: finalize pm run: %v", err)
+		b.postOrLog(ctx, channelID, m.F(m.PMFailed, err))
+		return
+	}
+
+	// Channel-facing output in the configured language.
+	translated := b.analyzer.Translate(ctx, rep)
+	translatedMD := analysis.RenderMarkdown(translated, m)
+	compact := b.pmCompact(translated)
+
+	_, err = b.api.UploadFile(ctx, slack.UploadFileParameters{
+		Channel:        channelID,
+		Filename:       fmt.Sprintf("ir-%04d-postmortem.md", c.ID),
+		Title:          m.F(m.RptTitle, c.ID, translated.Summary.Title),
+		Content:        translatedMD,
+		FileSize:       len(translatedMD),
+		InitialComment: compact,
+		SnippetType:    "markdown",
+	})
+	if err != nil {
+		b.logf("bot: upload pm report: %v", err)
+		b.postOrLog(ctx, channelID, compact+"\n"+m.F(m.PMUploadFailed, err))
+	}
+}
+
+// pmCompact builds the channel summary post for a (translated)
+// report. Kept well under Slack's limits by construction.
+func (b *Bot) pmCompact(rep *analysis.Report) string {
+	m := b.cfg.Msg
+	lines := []string{
+		m.F(m.PMCompactHeader, rep.CaseID, rep.Summary.Title),
+		m.F(m.PMCompactSeverity, rep.Summary.Severity),
+		m.F(m.PMCompactScore, rep.Review.OverallScore),
+		m.F(m.PMCompactTactics, len(rep.Tactics)),
+	}
+	appendTop := func(label string, items []string) {
+		if len(items) == 0 {
+			return
+		}
+		lines = append(lines, "*"+label+"*")
+		for i, it := range items {
+			if i == 2 {
+				break
+			}
+			lines = append(lines, "• "+it)
+		}
+	}
+	appendTop(m.RptStrengths, rep.Review.Strengths)
+	appendTop(m.RptImprovements, rep.Review.Improvements)
+	if rep.Truncated {
+		lines = append(lines, m.F(m.RptTruncated, rep.AnalyzedMessages, rep.TotalMessages))
+	}
+	lines = append(lines, m.PMCompactSee)
+	return strings.Join(lines, "\n")
+}
+
+// postOrLog posts to the channel, falling back to the log.
+func (b *Bot) postOrLog(ctx context.Context, channelID, text string) {
+	if _, err := b.api.PostMessage(ctx, channelID, slack.MsgOptionText(text, false)); err != nil {
+		b.logf("bot: post: %v (text: %s)", err, text)
+	}
 }
 
 // respond replies to a slash invocation via response_url when

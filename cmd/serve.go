@@ -12,10 +12,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nlink-jp/ir-hub/internal/acl"
+	"github.com/nlink-jp/ir-hub/internal/analysis"
 	"github.com/nlink-jp/ir-hub/internal/bot"
 	"github.com/nlink-jp/ir-hub/internal/cases"
 	"github.com/nlink-jp/ir-hub/internal/config"
 	"github.com/nlink-jp/ir-hub/internal/ingest"
+	"github.com/nlink-jp/ir-hub/internal/llm"
 	"github.com/nlink-jp/ir-hub/internal/msg"
 	"github.com/nlink-jp/ir-hub/internal/slackapi"
 	"github.com/nlink-jp/ir-hub/internal/store"
@@ -89,14 +91,33 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	})
 	ing := ingest.New(api, st)
 
-	b := bot.New(bot.NewSocketAdapter(socketmode.New(client)), api, st, checker, caseSvc, ing,
+	llmClient, err := llm.NewVertex(ctx, cfg.GCP.Project, cfg.GCP.Location, cfg.Model.Name,
+		cfg.Analysis.RequestTimeout)
+	if err != nil {
+		return err
+	}
+	runner := analysis.NewRunner(llmClient, st, analysis.Config{
+		Language:       cfg.Language,
+		BotUserID:      ident.UserID,
+		MaxInputTokens: cfg.Analysis.MaxInputTokens,
+	})
+
+	// Postmortem runs interrupted by a previous shutdown stay
+	// 'running' forever otherwise.
+	if n, err := st.FailStaleRuns(); err != nil {
+		return err
+	} else if n > 0 {
+		log.Printf("serve: marked %d stale postmortem run(s) as failed", n)
+	}
+
+	b := bot.New(bot.NewSocketAdapter(socketmode.New(client)), api, st, checker, caseSvc, ing, runner,
 		bot.Config{
 			DefaultVisibility: cfg.Channel.DefaultVisibility,
 			NotifyDenied:      cfg.ACL.NotifyDenied,
 			Msg:               catalog,
 		})
 
-	log.Printf("serve: ir-hub %s starting (db: %s)", rootCmd.Version, cfg.DB.Path)
+	log.Printf("serve: ir-hub %s starting (db: %s, model: %s)", rootCmd.Version, cfg.DB.Path, cfg.Model.Name)
 	if err := b.Run(ctx); err != nil && ctx.Err() == nil {
 		return fmt.Errorf("socket mode: %w", err)
 	}

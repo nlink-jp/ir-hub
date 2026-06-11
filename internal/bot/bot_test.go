@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,8 +15,10 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/nlink-jp/ir-hub/internal/acl"
+	"github.com/nlink-jp/ir-hub/internal/analysis"
 	"github.com/nlink-jp/ir-hub/internal/cases"
 	"github.com/nlink-jp/ir-hub/internal/ingest"
+	"github.com/nlink-jp/ir-hub/internal/knowledge"
 	"github.com/nlink-jp/ir-hub/internal/modal"
 	"github.com/nlink-jp/ir-hub/internal/msg"
 	"github.com/nlink-jp/ir-hub/internal/slackapi/slackapitest"
@@ -69,13 +72,76 @@ func (groupResolver) GetUserGroupMembers(ctx context.Context, groupID string) ([
 	return nil, nil
 }
 
+// ---- fake analyzer ----
+
+type fakeAnalyzer struct {
+	mu          sync.Mutex
+	pmCalls     int
+	statusCalls int
+	report      *analysis.Report
+	pmErr       error
+	statusText  string
+	statusErr   error
+}
+
+func sampleReport(caseID int64) *analysis.Report {
+	return &analysis.Report{
+		CaseID:  caseID,
+		Channel: "#ir-test",
+		Summary: analysis.Summary{Title: "DB outage", Severity: "high",
+			RootCause: "disk full", Resolution: "expanded", Summary: "An outage."},
+		Review: analysis.Review{OverallScore: 7,
+			Strengths: analysis.List{"fast detection"}, Improvements: analysis.List{"add runbook"}},
+		Tactics: []knowledge.Tactic{{
+			Title: "Check disk usage", Purpose: "Find full volumes.", Category: "log-analysis",
+			Tools: []string{"df"}, Procedure: "1. df -h", Observations: "100% = full",
+			Tags: []string{"disk"}, Confidence: "confirmed", Evidence: "output shared",
+		}},
+		Participants:     []string{"U-OK"},
+		TotalMessages:    3,
+		AnalyzedMessages: 3,
+		GeneratedAt:      "2026-06-10T12:00:00Z",
+	}
+}
+
+func (f *fakeAnalyzer) RunPostmortem(ctx context.Context, c *store.Case) (*analysis.Report, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pmCalls++
+	if f.pmErr != nil {
+		return nil, f.pmErr
+	}
+	if f.report != nil {
+		return f.report, nil
+	}
+	return sampleReport(c.ID), nil
+}
+
+func (f *fakeAnalyzer) Translate(ctx context.Context, rep *analysis.Report) *analysis.Report {
+	return rep
+}
+
+func (f *fakeAnalyzer) StatusSummary(ctx context.Context, c *store.Case) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.statusCalls++
+	if f.statusErr != nil {
+		return "", f.statusErr
+	}
+	if f.statusText != "" {
+		return f.statusText, nil
+	}
+	return "*Status*: investigating", nil
+}
+
 // ---- harness ----
 
 type harness struct {
-	bot    *Bot
-	socket *fakeSocket
-	api    *slackapitest.Fake
-	store  *store.Store
+	bot      *Bot
+	socket   *fakeSocket
+	api      *slackapitest.Fake
+	store    *store.Store
+	analyzer *fakeAnalyzer
 }
 
 func newHarness(t *testing.T, api *slackapitest.Fake, cfg Config) *harness {
@@ -90,11 +156,33 @@ func newHarness(t *testing.T, api *slackapitest.Fake, cfg Config) *harness {
 		AllowUsers: []string{"U-OK"},
 		CacheTTL:   time.Minute,
 	}, groupResolver{})
-	caseSvc := cases.New(api, st, cases.Config{DefaultVisibility: "private", NamePrefix: "ir-"})
+	caseSvc := cases.New(api, st, cases.Config{DefaultVisibility: "private", NamePrefix: "ir-", Msg: cfg.Msg})
 	ing := ingest.New(api, st, ingest.WithLogger(t.Logf))
 	sock := newFakeSocket()
-	b := New(sock, api, st, checker, caseSvc, ing, cfg, WithLogger(t.Logf))
-	return &harness{bot: b, socket: sock, api: api, store: st}
+	az := &fakeAnalyzer{}
+	b := New(sock, api, st, checker, caseSvc, ing, az, cfg, WithLogger(t.Logf))
+	return &harness{bot: b, socket: sock, api: api, store: st, analyzer: az}
+}
+
+// openCaseWithMessages prepares an active case bound to channelID
+// with n ingested messages.
+func (h *harness) openCaseWithMessages(t *testing.T, channelID string, n int) *store.Case {
+	t.Helper()
+	c, err := h.store.CreateCase("t", "low", "public", "U-OK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.ActivateCase(c.ID, channelID, "ir-0001-t"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < n; i++ {
+		h.store.InsertMessage(store.Message{
+			ChannelID: channelID, TS: fmt.Sprintf("1718000%03d.000001", i),
+			CaseID: c.ID, UserID: "U-OK", Text: "msg", Raw: "{}", Source: store.SourceEvent,
+		})
+	}
+	got, _ := h.store.CaseByID(c.ID)
+	return got
 }
 
 func slashEvent(envelope, user, channel, text string) socketmode.Event {
@@ -519,7 +607,7 @@ func TestSlashParseErrorJapanese(t *testing.T) {
 			return nil
 		},
 	}
-	h := newHarnessLang(t, api, Config{Msg: &msg.JA})
+	h := newHarness(t, api, Config{Msg: &msg.JA})
 
 	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "CORIGIN", "destroy everything"))
 	h.bot.Wait()
@@ -531,25 +619,304 @@ func TestSlashParseErrorJapanese(t *testing.T) {
 	}
 }
 
-// newHarnessLang is newHarness but honoring cfg.Msg for both the
-// bot and the cases service.
-func newHarnessLang(t *testing.T, api *slackapitest.Fake, cfg Config) *harness {
+// ---- postmortem flow ----
+
+func TestPMCommandRunsPostmortem(t *testing.T) {
+	var mu sync.Mutex
+	var uploads []slack.UploadFileParameters
+	api := &slackapitest.Fake{
+		UploadFileFn: func(ctx context.Context, p slack.UploadFileParameters) (*slack.FileSummary, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			uploads = append(uploads, p)
+			return &slack.FileSummary{ID: "F1"}, nil
+		},
+	}
+	h := newHarness(t, api, Config{})
+	c := h.openCaseWithMessages(t, "C1", 3)
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "C1", "pm"))
+	h.bot.Wait()
+
+	if h.analyzer.pmCalls != 1 {
+		t.Fatalf("pmCalls = %d, want 1", h.analyzer.pmCalls)
+	}
+	// Run recorded as done with the canonical report.
+	run, err := h.store.LatestPMRun(c.ID)
+	if err != nil || run.Status != "done" {
+		t.Fatalf("run = %+v, err %v", run, err)
+	}
+	if !strings.Contains(run.ReportMD, "# Postmortem: Case #0001") {
+		t.Errorf("stored report MD = %.80q", run.ReportMD)
+	}
+	// Knowledge replaced with allocated IDs.
+	rows, _ := h.store.KnowledgeByCase(c.ID)
+	if len(rows) != 1 || !strings.HasPrefix(rows[0].TacticID, "tac-") {
+		t.Fatalf("knowledge = %+v", rows)
+	}
+	if rows[0].Title != "Check disk usage" || rows[0].Confidence != "confirmed" {
+		t.Errorf("knowledge row = %+v", rows[0])
+	}
+	// Snippet uploaded with compact summary as the comment.
+	mu.Lock()
+	defer mu.Unlock()
+	if len(uploads) != 1 {
+		t.Fatalf("uploads = %d, want 1", len(uploads))
+	}
+	up := uploads[0]
+	if up.Channel != "C1" || up.Filename != "ir-0001-postmortem.md" || up.SnippetType != "markdown" {
+		t.Errorf("upload params = %+v", up)
+	}
+	if !strings.Contains(up.InitialComment, "Postmortem: Case #0001") ||
+		!strings.Contains(up.InitialComment, "Process score: 7/10") {
+		t.Errorf("compact = %q", up.InitialComment)
+	}
+}
+
+func TestCloseTriggersPostmortem(t *testing.T) {
+	api := &slackapitest.Fake{}
+	h := newHarness(t, api, Config{})
+	h.openCaseWithMessages(t, "C1", 2)
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "C1", "close"))
+	h.bot.Wait()
+
+	if h.analyzer.pmCalls != 1 {
+		t.Errorf("pmCalls after close = %d, want 1 (auto postmortem)", h.analyzer.pmCalls)
+	}
+}
+
+func TestPMFailureRecordedAndPosted(t *testing.T) {
+	var mu sync.Mutex
+	var posts []string
+	api := &slackapitest.Fake{
+		PostMessageFn: func(ctx context.Context, channelID string, opts ...slack.MsgOption) (string, error) {
+			_, values, err := slack.UnsafeApplyMsgOptions("tok", channelID, "https://slack.test/api/", opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			posts = append(posts, values.Get("text"))
+			mu.Unlock()
+			return "1.1", nil
+		},
+	}
+	h := newHarness(t, api, Config{})
+	c := h.openCaseWithMessages(t, "C1", 2)
+	h.analyzer.pmErr = fmt.Errorf("stage summary: boom")
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "C1", "pm"))
+	h.bot.Wait()
+
+	run, _ := h.store.LatestPMRun(c.ID)
+	if run.Status != "failed" || !strings.Contains(run.Error, "boom") {
+		t.Errorf("run = %+v", run)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	failPosted := false
+	for _, p := range posts {
+		if strings.Contains(p, "postmortem failed") {
+			failPosted = true
+		}
+	}
+	if !failPosted {
+		t.Errorf("failure not posted: %v", posts)
+	}
+}
+
+// pmGuardHarness wires a response recorder; Wait() is terminal
+// (draining), so each guard scenario gets its own harness.
+func pmGuardHarness(t *testing.T) (*harness, func() []string) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
+	var mu sync.Mutex
+	var responses []string
+	api := &slackapitest.Fake{
+		PostResponseFn: func(ctx context.Context, url, text string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			responses = append(responses, text)
+			return nil
+		},
+	}
+	h := newHarness(t, api, Config{})
+	return h, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]string, len(responses))
+		copy(out, responses)
+		return out
+	}
+}
+
+func TestPMGuardNotCaseChannel(t *testing.T) {
+	h, responses := pmGuardHarness(t)
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "CRANDOM", "pm"))
+	h.bot.Wait()
+	got := responses()
+	if len(got) != 1 || !strings.Contains(got[0], "not an ir-hub case channel") {
+		t.Errorf("responses = %v", got)
+	}
+	if h.analyzer.pmCalls != 0 {
+		t.Errorf("pmCalls = %d, want 0", h.analyzer.pmCalls)
+	}
+}
+
+func TestPMGuardNoMessages(t *testing.T) {
+	h, responses := pmGuardHarness(t)
+	h.openCaseWithMessages(t, "C1", 0)
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "C1", "pm"))
+	h.bot.Wait()
+	got := responses()
+	if len(got) != 1 || !strings.Contains(got[0], "no ingested messages") {
+		t.Errorf("responses = %v", got)
+	}
+	if h.analyzer.pmCalls != 0 {
+		t.Errorf("pmCalls = %d, want 0", h.analyzer.pmCalls)
+	}
+}
+
+func TestPMGuardAlreadyRunning(t *testing.T) {
+	h, responses := pmGuardHarness(t)
+	c := h.openCaseWithMessages(t, "C1", 1)
+	if _, err := h.store.BeginPMRun(c.ID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "C1", "pm"))
+	h.bot.Wait()
+	got := responses()
+	if len(got) != 1 || !strings.Contains(got[0], "already in progress") {
+		t.Errorf("responses = %v", got)
+	}
+	if h.analyzer.pmCalls != 0 {
+		t.Errorf("pmCalls = %d, want 0", h.analyzer.pmCalls)
+	}
+}
 
-	checker := acl.New(acl.Config{
-		AllowUsers: []string{"U-OK"},
-		CacheTTL:   time.Minute,
-	}, groupResolver{})
-	caseSvc := cases.New(api, st, cases.Config{DefaultVisibility: "private", NamePrefix: "ir-", Msg: cfg.Msg})
-	ing := ingest.New(api, st, ingest.WithLogger(t.Logf))
-	sock := newFakeSocket()
-	b := New(sock, api, st, checker, caseSvc, ing, cfg, WithLogger(t.Logf))
-	return &harness{bot: b, socket: sock, api: api, store: st}
+func TestPMUploadFailureFallsBackToPost(t *testing.T) {
+	var mu sync.Mutex
+	var posts []string
+	api := &slackapitest.Fake{
+		UploadFileFn: func(ctx context.Context, p slack.UploadFileParameters) (*slack.FileSummary, error) {
+			return nil, fmt.Errorf("not_in_channel")
+		},
+		PostMessageFn: func(ctx context.Context, channelID string, opts ...slack.MsgOption) (string, error) {
+			_, values, err := slack.UnsafeApplyMsgOptions("tok", channelID, "https://slack.test/api/", opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			posts = append(posts, values.Get("text"))
+			mu.Unlock()
+			return "1.1", nil
+		},
+	}
+	h := newHarness(t, api, Config{})
+	c := h.openCaseWithMessages(t, "C1", 2)
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "C1", "pm"))
+	h.bot.Wait()
+
+	// Finalize still succeeded — report and knowledge survive.
+	run, _ := h.store.LatestPMRun(c.ID)
+	if run.Status != "done" {
+		t.Errorf("run status = %q, want done despite upload failure", run.Status)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, p := range posts {
+		if strings.Contains(p, "Postmortem: Case #0001") && strings.Contains(p, "could not attach") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("fallback post missing: %v", posts)
+	}
+}
+
+func TestModalPMAction(t *testing.T) {
+	api := &slackapitest.Fake{}
+	h := newHarness(t, api, Config{})
+	h.openCaseWithMessages(t, "C1", 2)
+
+	h.bot.handleEvent(context.Background(), submissionEvent("e1", "U-OK",
+		modal.CallbackAction, metaJSON("C1", "U-OK"),
+		map[string]map[string]slack.BlockAction{"action": {"value": selected("pm")}}))
+	h.bot.Wait()
+
+	if h.analyzer.pmCalls != 1 {
+		t.Errorf("pmCalls = %d, want 1 via modal", h.analyzer.pmCalls)
+	}
+}
+
+func TestStatusPostsLLMSummary(t *testing.T) {
+	var mu sync.Mutex
+	var posts []string
+	api := &slackapitest.Fake{
+		PostMessageFn: func(ctx context.Context, channelID string, opts ...slack.MsgOption) (string, error) {
+			_, values, err := slack.UnsafeApplyMsgOptions("tok", channelID, "https://slack.test/api/", opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			posts = append(posts, values.Get("text"))
+			mu.Unlock()
+			return "1.1", nil
+		},
+	}
+	h := newHarness(t, api, Config{})
+	h.openCaseWithMessages(t, "C1", 2)
+	h.analyzer.statusText = "*Status*: contained, monitoring"
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "C1", "status"))
+	h.bot.Wait()
+
+	if h.analyzer.statusCalls != 1 {
+		t.Fatalf("statusCalls = %d, want 1", h.analyzer.statusCalls)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, p := range posts {
+		if strings.Contains(p, "contained, monitoring") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("LLM summary not posted: %v", posts)
+	}
+}
+
+func TestStatusLLMFailureKeepsMetadata(t *testing.T) {
+	var mu sync.Mutex
+	var responses []string
+	api := &slackapitest.Fake{
+		PostResponseFn: func(ctx context.Context, url, text string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			responses = append(responses, text)
+			return nil
+		},
+	}
+	h := newHarness(t, api, Config{})
+	h.openCaseWithMessages(t, "C1", 2)
+	h.analyzer.statusErr = fmt.Errorf("llm down")
+
+	h.bot.handleEvent(context.Background(), slashEvent("e1", "U-OK", "C1", "status"))
+	h.bot.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(responses) < 2 {
+		t.Fatalf("responses = %v, want metadata + failure note", responses)
+	}
+	if !strings.Contains(responses[0], "Case #0001") {
+		t.Errorf("metadata reply missing: %q", responses[0])
+	}
+	if !strings.Contains(responses[1], "situation summary failed") {
+		t.Errorf("failure note missing: %q", responses[1])
+	}
 }
 
 func TestFirstWord(t *testing.T) {

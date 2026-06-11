@@ -30,6 +30,7 @@ const (
 	ActionNew    = "new"
 	ActionClose  = "close"
 	ActionStatus = "status"
+	ActionPM     = "pm"
 )
 
 // Block / action IDs.
@@ -70,6 +71,7 @@ func BuildActionPicker(meta Metadata, cat *msg.Catalog) slack.ModalViewRequest {
 		slack.NewOptionBlockObject(ActionNew, plainText(cat.ModalActionNew), nil),
 		slack.NewOptionBlockObject(ActionClose, plainText(cat.ModalActionClose), nil),
 		slack.NewOptionBlockObject(ActionStatus, plainText(cat.ModalActionStatus), nil),
+		slack.NewOptionBlockObject(ActionPM, plainText(cat.ModalActionPM), nil),
 	}
 	sel := slack.NewOptionsSelectBlockElement(
 		slack.OptTypeStatic, plainText(cat.ModalActionPlaceholder), actionIDValue, options...)
@@ -148,7 +150,7 @@ func ParseAction(view slack.View) (string, Metadata, error) {
 	}
 	action := stateValue(view, blockAction).SelectedOption.Value
 	switch action {
-	case ActionNew, ActionClose, ActionStatus:
+	case ActionNew, ActionClose, ActionStatus, ActionPM:
 		return action, meta, nil
 	default:
 		return "", Metadata{}, fmt.Errorf("unexpected action %q in submission", action)
