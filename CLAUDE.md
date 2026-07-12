@@ -32,7 +32,7 @@ are carried over but the code is rebuilt here.
 ```sh
 make build          # → dist/ir-hub
 make test           # or: go test ./...
-make build-all      # cross-compile 5 platforms
+make build-all      # cross-compile 4 platforms (darwin arm64 only; no Intel)
 ```
 
 ## Configuration
