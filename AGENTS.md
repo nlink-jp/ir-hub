@@ -19,6 +19,7 @@ make build          # dist/ir-hub
 make test           # or: go test ./...
 make build-all      # 5-platform cross-compile (Linux x64/ARM, macOS x64/ARM, Windows x64)
 make package        # release zips; darwin signed + notarized
+make verify-release  # gate: .notarized marker + freshness (run before upload)
 make clean
 ```
 
