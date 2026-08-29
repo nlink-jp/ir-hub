@@ -1,5 +1,9 @@
 # ir-hub
 
+> **Archived (2026-08-30)** — no longer used or maintained. Kept public
+> for reference; released binaries remain downloadable from the
+> [Releases](https://github.com/nlink-jp/ir-hub/releases) page.
+
 Incident-response lifecycle hub — a one-package Slack ChatOps bot that
 supports the full IR lifecycle with LLMs: case channel creation,
 in-flight response support, postmortem analysis, and knowledge

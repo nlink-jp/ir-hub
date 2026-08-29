@@ -1,5 +1,8 @@
 # AGENTS.md — ir-hub
 
+> **Archived (2026-08-30)** — this repository is read-only and no longer
+> maintained. Kept for reference only; do not plan new work here.
+
 Contributor onboarding. For end-user documentation see
 [README.md](README.md). For design rationale see the project RFP
 under `docs/en/ir-hub-rfp.md`.
